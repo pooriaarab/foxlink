@@ -4,3 +4,5 @@ allowBuilds:
   esbuild: true
 minimumReleaseAgeExclude:
   - create-foxkit@0.1.0
+  - foxgate@0.1.0
+  - foxvault@0.1.0
