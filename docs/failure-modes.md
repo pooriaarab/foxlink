@@ -123,3 +123,22 @@ what is not tested against the real Google.
 | E7 | The popup loads the tracking pixel of an email. | The fake server counts zero pixel hits. | `e2e/run.mjs` E7 |
 | E8 | A send runs with no approval. | Send asks first. Approve sends it one time. | `e2e/run.mjs` E8 |
 | E9 | Disconnect leaves a token that works. | After disconnect, the fake server refuses the old refresh token. | `e2e/run.mjs` E9 |
+| E10 | The release build keeps `http://*.localhost/*`, which only the fake Google uses. | The release `dist-ext/manifest.json` has only the Google hosts. The e2e build (`build-ext.mjs --e2e`) adds `*.localhost`. | `tests/build-ext.test.ts` E10 |
+| E11 | The release build can still send OAuth codes and tokens to a local server, for example from a port saved by an e2e build. | The release bundle holds no `.localhost` endpoint, and the popup shows no local server field. | `tests/build-ext.test.ts` E11 |
+
+## AMO release build and listed submission (`scripts/amo-listing.mjs`)
+
+`pnpm check:amo` reads `dist-ext/`, which is what `release.yml` signs. Each
+row is a way that the listed build or the submission can go wrong.
+
+| ID | Failure | Wanted result |
+|---|---|---|
+| AR1 | `dist-ext/` is missing, so the check reads nothing | The check stops and says to run `pnpm build:ext` |
+| AR2 | A content script in the release manifest matches `127.0.0.1`, `localhost` or `*.localhost` (a test bridge) | The check stops and names the pattern |
+| AR3 | A host permission for a local host exists only for tests | The check stops, unless `local_hosts` in the listing gives a reason for that exact pattern |
+| AR4 | A file named for tests (`e2e`, `fixture`, `test`, `spec`) is in `dist-ext/` | The check stops and names the file |
+| AR5 | `dist-ext/` came from `build-ext.mjs --e2e` | AR2 or AR4 stops it |
+| AR6 | The `local_hosts` reasons go to AMO as an unknown field | `metadata` leaves them out, as it does the privacy policy |
+| AR7 | A re-run submits a version that AMO already has as listed | `version-status` says `listed`, and the step skips web-ext sign and finishes the release |
+| AR8 | AMO has the version as unlisted | `version-status` stops and says to bump the version |
+| AR9 | The AMO version lookup fails (401, 500, network) | `version-status` stops; it never guesses `absent` |
