@@ -21,8 +21,10 @@ You bring your own OAuth client ID. foxlink ships none.
 ## Install
 
 ```bash
-npm i foxlink
+npm i @pooriaarab/foxlink
 ```
+
+The npm package is `@pooriaarab/foxlink`: npm refuses the plain name `foxlink` as too similar to an existing package (oxlint and comlink).
 
 foxlink needs `foxvault` and `foxgate`. npm installs them with it.
 
@@ -36,7 +38,7 @@ extension needs the permissions `identity`, `storage`, `webRequest`, and
 ```js
 import { storageAreaStore } from "foxgate";
 import { attachHeaderInjection, createVault, indexedDbKeyStore } from "foxvault";
-import { calendar, createLink, gmail, googleProvider } from "foxlink";
+import { calendar, createLink, gmail, googleProvider } from "@pooriaarab/foxlink";
 
 const store = storageAreaStore(browser.storage.local);
 const vault = createVault({ store, keyStore: indexedDbKeyStore() });
@@ -58,7 +60,7 @@ async function today() {
 The HTML to text function also runs in Node:
 
 ```js
-import { htmlToText } from "foxlink";
+import { htmlToText } from "@pooriaarab/foxlink";
 
 console.log(htmlToText('<p>Hi &amp; welcome</p><img src="https://t.example/p.gif"><script>steal()</script>'));
 // Hi & welcome
