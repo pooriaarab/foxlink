@@ -20,15 +20,19 @@ async function settings() {
 let vaultReady;
 let current;
 
-// The test port points every endpoint at the local fake Google that e2e/run.mjs starts.
+// In the e2e build only, the port points every endpoint at the local fake
+// Google that e2e/run.mjs starts. build-ext.mjs sets FOXLINK_E2E; in the
+// release build this branch and localEndpoints() are not in the bundle.
+function localEndpoints(port) {
+  const local = (sub) => `http://${sub}.localhost:${Number(port)}`;
+  return { authorizeUrl: `${local("accounts")}/o/oauth2/v2/auth`, tokenUrl: `${local("oauth2")}/token`, revokeUrl: `${local("oauth2")}/revoke`, gmailBase: `${local("gmail")}/gmail/v1`, calendarBase: `${local("www")}/calendar/v3` };
+}
+
 async function build(s) {
   const read = [GOOGLE_SCOPES.gmailRead, GOOGLE_SCOPES.calendarRead];
   const scopes = s.allowSend ? [...read, GOOGLE_SCOPES.gmailSend] : read;
-  const local = (sub) => `http://${sub}.localhost:${Number(s.testPort)}`;
-  const endpoints = s.testPort
-    ? { authorizeUrl: `${local("accounts")}/o/oauth2/v2/auth`, tokenUrl: `${local("oauth2")}/token`, revokeUrl: `${local("oauth2")}/revoke`, gmailBase: `${local("gmail")}/gmail/v1`, calendarBase: `${local("www")}/calendar/v3` }
-    : undefined;
-  const provider = googleProvider({ clientId: s.clientId, ...(s.clientSecret ? { clientSecret: s.clientSecret } : {}), scopes, endpoints, allowHttp: Boolean(s.testPort) });
+  const endpoints = globalThis.FOXLINK_E2E && s.testPort ? localEndpoints(s.testPort) : undefined;
+  const provider = googleProvider({ clientId: s.clientId, ...(s.clientSecret ? { clientSecret: s.clientSecret } : {}), scopes, endpoints, allowHttp: Boolean(endpoints) });
   vaultReady ??= vault.status().then((state) => (state === "new" ? vault.initialize() : undefined));
   await vaultReady;
   const link = createLink({ provider, vault, store, identity: browser.identity, transport: "inject" });
