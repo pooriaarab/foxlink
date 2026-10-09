@@ -10,9 +10,9 @@
 foxlink runs the OAuth 2.0 authorization code flow with PKCE through
 `identity.launchWebAuthFlow`. It works with any provider config, and it has
 a Google preset for Gmail and Calendar. The tokens go into
-[foxvault](https://github.com/pooriaarab/foxvault), and in Firefox foxvault
-adds the access token to each API request. Your extension code, the page,
-and the AI model never get the token. Sending an email or adding an event
+[foxvault](https://github.com/pooriaarab/foxvault). With the `inject`
+transport, foxvault adds the access token to each API request in Firefox.
+Then your extension code, the page, and the AI model never get the token. Sending an email or adding an event
 waits for a [foxgate](https://github.com/pooriaarab/foxgate) approval of
 the exact action. Email and event text comes back marked as untrusted.
 
@@ -106,10 +106,13 @@ sequenceDiagram
 3. When the server grants a scope that foxlink did not ask for, foxlink
    revokes the token and stores nothing.
 4. The access token and the refresh token are foxvault secrets. The store
-   holds only the scopes and the expiry time.
+   holds only the scopes, the issue and expiry times, and whether a refresh
+   token exists.
 5. `link.fetch` sends requests to the API hosts only. It refreshes the
-   access token 60 seconds before expiry and one time after a 401. Calls at
-   the same time share one refresh request.
+   access token 60 seconds before expiry (or at half its life, when that is
+   sooner) and one time after a 401. Calls at the same time share one
+   refresh request. A refresh that a `connect` or a `disconnect` overtook
+   throws its token away.
 6. When Google refuses the refresh token (`invalid_grant`), foxlink forgets
    the tokens and throws `reconnect`.
 
@@ -170,7 +173,7 @@ have to hold the tokens in another process.
 | `transport` | `"use"` | `"inject"`: foxvault adds the header in Firefox, with `attachHeaderInjection`. `"use"`: foxlink adds it in your host code, for example in Node. |
 | `fetch` | global `fetch` | The fetch function. |
 | `now` | `Date.now` | The clock. |
-| `skewMs` | 60,000 | Refresh this long before the access token expires. |
+| `skewMs` | 60,000 | Refresh this long before the access token expires. foxlink uses half of the token life when that is shorter. |
 
 | Method | What it does |
 |---|---|
@@ -187,7 +190,7 @@ have to hold the tokens in another process.
 |---|---|
 | `gmail(link, { gate? }).listMessages({ query?, max?, pageToken? })` | The newest messages with From, To, Subject, Date, and the snippet. `max` is 1 to 50 (default 10). Returns `{ messages, nextPageToken? }`. |
 | `gmail(link).getMessage(id)` | One message with `text`: the `text/plain` part, or the HTML part as plain text. |
-| `gmail(link, { gate }).sendMessage({ to, subject, body }, { token? })` | A plain text email, after a foxgate approval. Returns `{ status: "sent", id }`, `{ status: "ask", requestId }`, or `{ status: "refused", reason }`. |
+| `gmail(link, { gate }).sendMessage({ to, subject, body }, { token? })` | A plain text email, after a foxgate approval. A subject with non-ASCII characters or `=?` goes out as RFC 2047 encoded words, so the recipient sees the approved text. Returns `{ status: "sent", id }`, `{ status: "ask", requestId }`, or `{ status: "refused", reason }`. |
 | `calendar(link).listEvents({ timeMin?, timeMax?, max? })` | The next events from `timeMin` (default: now), by start time. Returns `{ events }`. |
 | `calendar(link, { gate }).createEvent({ summary, start, end, description?, location? }, { token? })` | Adds an event, after a foxgate approval. Returns `created`, `ask`, or `refused`. |
 | `FOXLINK_TOOLS` | `{ "foxlink.gmail.send": "submit", "foxlink.calendar.create": "submit" }`. Pass it to `createFoxgate({ tools })`, and add a `submit` grant for the API hosts. |
@@ -199,7 +202,7 @@ deny reason, for example `action-changed`, `token-used`, or `rejected`.
 
 | Export | What it does |
 |---|---|
-| `htmlToText(html)` | Plain text with no DOM and no network. Scripts, styles, comments, and image URLs go away. |
+| `htmlToText(html)` | Plain text with no DOM and no network, in one pass. Scripts, styles, comments, and image URLs go away. Only a real close tag ends a script or style block. |
 | `toPromptText(record)` | The record inside `<untrusted source="…" id="…">` tags. Its text cannot close the tag. |
 | `decodeEntities(text)` | Decodes HTML entities one time. |
 | `messageText(payload)` | The text of a Gmail message payload. |
