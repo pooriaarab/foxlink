@@ -19,24 +19,62 @@ export function decodeEntities(text: string): string {
   });
 }
 
-// A tag, with quoted attribute values that can hold ">".
-const TAG = /<\/?[a-z][^>"']*(?:(?:"[^"]*"|'[^']*')[^>"']*)*>/gi;
-const DROP = "script|style|head|title|noscript|template|svg|iframe|object|embed|math";
+const DROP = new Set(["script", "style", "head", "title", "noscript", "template", "svg", "iframe", "object", "embed", "math"]);
+const BREAK = new Set(["br", "hr"]);
+const BLOCK_END = new Set(["p", "div", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "table", "blockquote", "section", "article"]);
+
+/** The index of the ">" that ends the tag at `from`, outside quotes, or the end of the text. One pass. */
+function tagEnd(html: string, from: number): number {
+  let quote = "";
+  for (let j = from; j < html.length; j += 1) {
+    const c = html[j];
+    if (quote) {
+      if (c === quote) quote = "";
+    } else if (c === '"' || c === "'") quote = c;
+    else if (c === ">") return j;
+  }
+  return html.length;
+}
 
 /**
- * Plain text from HTML, with no DOM and no network. Scripts, styles, and
- * comments go away with their content. Images and links lose their URLs.
- * Hidden text (for example `display: none`) stays: check it with a tool such as foxshield.
+ * Plain text from HTML, with no DOM and no network, in one pass. Scripts,
+ * styles, and comments go away with their content. Images and links lose
+ * their URLs. Hidden text (for example `display: none`) stays: check it with
+ * a tool such as foxshield.
  */
 export function htmlToText(html: string): string {
-  let s = html.replace(/<!--[\s\S]*?(?:-->|$)/g, "");
-  s = s.replace(new RegExp(`<(${DROP})\\b[\\s\\S]*?<\\/\\1\\s*>`, "gi"), "");
-  s = s.replace(new RegExp(`<(${DROP})\\b[\\s\\S]*$`, "gi"), "");
-  s = s.replace(/<(?:br|hr)\b[^>]*>|<\/(?:p|div|tr|h[1-6]|table|blockquote|section|article)\s*>/gi, "\n");
-  s = s.replace(/<li\b[^>]*>/gi, "\n- ");
-  s = s.replace(TAG, "");
-  s = decodeEntities(s);
-  return s
+  let out = "";
+  let i = 0;
+  while (i < html.length) {
+    const lt = html.indexOf("<", i);
+    if (lt === -1) {
+      out += html.slice(i);
+      break;
+    }
+    out += html.slice(i, lt);
+    if (html.startsWith("<!--", lt)) {
+      const close = html.indexOf("-->", lt + 4);
+      i = close === -1 ? html.length : close + 3;
+      continue;
+    }
+    const name = /^<(\/?)([a-z][a-z0-9]*)/i.exec(html.slice(lt, lt + 40));
+    if (!name) {
+      out += "<";
+      i = lt + 1;
+      continue;
+    }
+    const closing = name[1] === "/";
+    const tag = (name[2] ?? "").toLowerCase();
+    i = tagEnd(html, lt + 1) + 1;
+    if (!closing && DROP.has(tag)) {
+      const find = new RegExp(`</${tag}`, "gi");
+      find.lastIndex = i;
+      const close = find.exec(html)?.index ?? -1;
+      i = close === -1 ? html.length : tagEnd(html, close) + 1;
+    } else if (BREAK.has(tag) || (closing && BLOCK_END.has(tag))) out += "\n";
+    else if (!closing && tag === "li") out += "\n- ";
+  }
+  return decodeEntities(out)
     .replace(/[ \t\f\v\u00a0]+/g, " ")
     .replace(/ *\n */g, "\n")
     .replace(/\n{3,}/g, "\n\n")
