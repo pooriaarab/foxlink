@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>foxlink demo</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <h1>foxlink</h1>
+    <details id="settings-box">
+      <summary>Settings</summary>
+      <label>OAuth client ID <input id="client-id" autocomplete="off" /></label>
+      <label>Client secret (if Google gave one) <input id="client-secret" type="password" autocomplete="off" /></label>
+      <label>Test server port (empty: Google) <input id="test-port" inputmode="numeric" /></label>
+      <label class="row"><input id="allow-send" type="checkbox" /> Ask for the Gmail send scope</label>
+      <p>Redirect URI to register: <code id="redirect"></code></p>
+      <button id="save">Save</button>
+    </details>
+    <p>Status: <output id="status">Not connected</output></p>
+    <div class="row">
+      <button id="connect">Connect Google</button>
+      <button id="disconnect">Disconnect</button>
+    </div>
+    <div class="row">
+      <button id="events">Show my next 3 events</button>
+      <button id="subjects">Show 5 latest email subjects</button>
+    </div>
+    <ul id="list"></ul>
+    <button id="read">Read the latest email</button>
+    <pre id="text"></pre>
+    <details id="send-box">
+      <summary>Send an email (asks you first)</summary>
+      <label>To <input id="to" /></label>
+      <label>Subject <input id="subject" /></label>
+      <label>Body <textarea id="body"></textarea></label>
+      <button id="send">Send</button>
+      <pre id="pending"></pre>
+      <div class="row"><button id="approve" hidden>Approve</button><button id="deny" hidden>Deny</button></div>
+    </details>
+    <p>Result: <output id="result"></output></p>
+    <script src="popup.js"></script>
+  </body>
+</html>
