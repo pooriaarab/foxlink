@@ -77,6 +77,8 @@ what is not tested against the real Google.
 | M7 | Header injection in send: `to` or `subject` has a CR or LF. | `sendMessage` refuses with `bad-input`. | `send.test.ts` S6 |
 | M8 | A subject has non-ASCII characters. | The subject is RFC 2047 encoded. | `send.test.ts` S2 |
 | M9 | A hostile HTML email (many unclosed quotes, `<script>` tags, or comments) makes the HTML to text step run for seconds, and the background page hangs. | `htmlToText` reads the HTML in one pass. 1 MB of hostile HTML takes less than 1 second. | `gmail.test.ts` M9 |
+| M10 | A look-alike close tag such as `</scriptx>` or `</stylesheet>` ends the dropped block early, so script text that a browser never shows reaches the model. | Only a real close tag (`</script` then whitespace, `/`, or `>`) ends the block. | `gmail.test.ts` M10 |
+| M11 | A `'` or `"` inside an unquoted attribute value (`<p title=it's>`) counts as a quote, and visible text after it is lost. The human and the agent then see different emails. | A quote opens a quoted value only right after `=`. | `gmail.test.ts` M11 |
 
 ## Calendar (C)
 
