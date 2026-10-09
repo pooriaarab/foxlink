@@ -8,6 +8,9 @@ const WRITE = [SCOPE.gmailRead, SCOPE.calRead, SCOPE.gmailSend, SCOPE.calWrite];
 const mail1 = { to: "bob@example.com", subject: "Réunion ☕", body: "See you at 10.\nAna" };
 const event1 = { summary: "Dentist", start: "2026-10-12T09:00:00Z", end: "2026-10-12T09:30:00Z", location: "Main St" };
 
+/** An RFC 3339 time h hours from now. */
+const at = (h: number) => new Date(Date.now() + h * 3_600_000).toISOString();
+
 async function gated(options: { scopes?: string[]; gate?: boolean } = {}) {
   const env = await setup({ provider: { allowedScopes: WRITE } });
   await env.link.connect({ scopes: options.scopes ?? WRITE });
@@ -100,7 +103,6 @@ describe("gated writes", () => {
 describe("calendar read", () => {
   it("C1, C2: next events from now, sorted, plain text, untrusted", async () => {
     const { cal, g } = await gated();
-    const at = (h: number) => new Date(Date.now() + h * 3_600_000).toISOString();
     g.addEvents([
       { id: "late", summary: "Late", start: { dateTime: at(30) }, end: { dateTime: at(31) } },
       { id: "past", summary: "Past", start: { dateTime: at(-5) }, end: { dateTime: at(-4) } },
