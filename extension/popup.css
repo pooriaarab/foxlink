@@ -1,6 +1,7 @@
 body { font: 13px/1.4 system-ui, sans-serif; width: 360px; margin: 12px; color: #1b1b1f; }
 h1 { font-size: 16px; margin: 0 0 8px; }
 label { display: block; margin: 6px 0; }
+[hidden] { display: none; }
 input:not([type="checkbox"]), textarea { display: block; width: 100%; box-sizing: border-box; }
 .row { display: flex; gap: 6px; align-items: center; margin: 6px 0; }
 button { padding: 4px 8px; }

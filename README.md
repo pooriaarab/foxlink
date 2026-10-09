@@ -33,8 +33,8 @@ foxlink needs `foxvault` and `foxgate`. npm installs them with it.
 
 This code runs in the background script of a Firefox extension. The
 extension needs the permissions `identity`, `storage`, `webRequest`, and
-`webRequestBlocking`, and host permissions for the Google hosts. The demo in
-`extension/` makes the same calls.
+`webRequestBlocking`, and host permissions for the Google hosts. The
+extension in `extension/` makes the same calls.
 
 ```js
 import { storageAreaStore } from "foxgate";
@@ -223,18 +223,21 @@ can have `status` (HTTP) and `oauthError` (the server error code, cut to
 `a-z 0-9 _`). No message holds a token, a code, or server text. Vault errors,
 for example `locked`, come through as foxvault `VaultError`.
 
-## Demo extension
+## The extension
 
-`extension/` is a demo for Firefox 153+. Type your OAuth client ID in
-Settings. Then use "Connect Google", "Show my next 3 events", "Show 5 latest
-email subjects", and "Read the latest email". With "Ask for the Gmail send
+`extension/` is the foxlink add-on for Firefox 153+. Type your OAuth client
+ID in Settings. Then use "Connect Google", "Show my next 3 events", "Show 5
+latest email subjects", and "Read the latest email". With "Ask for the Gmail send
 scope" on, you can send an email after you approve the exact message.
 
 ```bash
 pnpm install
 pnpm build:ext   # builds dist-ext/; load it from about:debugging
-pnpm e2e         # runs the demo in Firefox against the local fake Google
+pnpm e2e         # builds with --e2e and runs it in Firefox against the local fake Google
 ```
+
+Install from AMO: [addons.mozilla.org/firefox/addon/foxlink](https://addons.mozilla.org/firefox/addon/foxlink/)
+(pending AMO review; the link works after approval).
 
 ### Use your own Google client ID
 
@@ -253,16 +256,16 @@ endpoints and REST shapes. These are the steps to try the real Google:
 5. In **Clients**, create an OAuth client with the application type
    **Desktop app**. Google accepts loopback redirect URIs for this type.
    Copy the client ID and the client secret.
-6. In the demo Settings, paste the client ID and the client secret. Leave
-   the test server port empty. Select **Save**, then **Connect Google**.
+6. In the foxlink Settings, paste the client ID and the client secret.
+   Select **Save**, then **Connect Google**.
 
 If Google refuses the redirect URI, make a **Web application** client
-instead. Add the redirect URI that the demo Settings show under
+instead. Add the redirect URI that the foxlink Settings show under
 **Authorized redirect URIs**. Google treats the client secret of an
 installed app as not secret. foxlink sends it to the token endpoint only.
 
 While the app is in the **Testing** state, Google makes refresh tokens that
-expire in 7 days. Then the demo asks you to connect again. `gmail.readonly`
+expire in 7 days. Then foxlink asks you to connect again. `gmail.readonly`
 is a restricted scope. A public app with it needs a Google review.
 
 ## Firefox APIs used
@@ -276,8 +279,8 @@ is a restricted scope. A public app with it needs a Google review.
 | `fetch` | [fetch](https://developer.mozilla.org/en-US/docs/Web/API/Window/fetch) | The token, revoke, Gmail, and Calendar requests. |
 | `webRequest.onBeforeSendHeaders` with `blocking`, through foxvault | [onBeforeSendHeaders](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/webRequest/onBeforeSendHeaders) | foxvault adds the access token to requests from the extension to the API hosts. |
 | IndexedDB, through foxvault | [IndexedDB API](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API) | The non-extractable vault key. |
-| `storage.local` | [storage.local](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/storage/local) | Encrypted tokens, the token record, foxgate state, and demo settings. |
-| `runtime.sendMessage`, `runtime.onMessage` | [runtime](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/runtime) | The popup talks to the background page. Demo only. |
+| `storage.local` | [storage.local](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/storage/local) | Encrypted tokens, the token record, foxgate state, and the popup settings. |
+| `runtime.sendMessage`, `runtime.onMessage` | [runtime](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/runtime) | The popup talks to the background page. Extension only. |
 
 ## Limits
 
@@ -311,8 +314,9 @@ is a restricted scope. A public app with it needs a Google review.
   objects on the same store do not share a refresh, so they can send two
   refresh requests at the same time.
 - In passphrase mode, a locked vault stops every call with `locked`.
-- The demo has a host permission for `http://*.localhost/*`, for the E2E
-  test server.
+- Only the e2e build (`node scripts/build-ext.mjs --e2e`) has the host
+  permission `http://*.localhost/*` and the local server port, for the fake
+  Google. The release build that AMO signs has neither.
 
 ## Part of the fox primitives
 
