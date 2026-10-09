@@ -6,6 +6,7 @@ import { createLink, googleProvider } from "../src/index.js";
 import { CLIENT_ID, REDIRECT, leaks, recordingStore, rejects, setup } from "./helpers.js";
 
 const HOUR = 3_600_000;
+const always401: typeof fetch = async (input, init) => (String(input).includes("/gmail/") ? new Response("{}", { status: 401 }) : fetch(input, init));
 
 /** A link with a clock that the test moves. */
 async function clocked(options: Parameters<typeof setup>[0] = {}) {
@@ -37,8 +38,6 @@ describe("tokens", () => {
     expect((await list()).status).toBe(200);
     expect(g.counts.refresh).toBe(1);
 
-    const always401: typeof fetch = async (input, init) =>
-      String(input).includes("/gmail/") ? new Response("{}", { status: 401 }) : fetch(input, init);
     const stuck = await clocked({ link: { fetch: always401 } });
     await stuck.link.connect();
     await rejects(() => stuck.list(), "unauthorized");
@@ -80,6 +79,19 @@ describe("tokens", () => {
     const results = await Promise.all([list(), list()]);
     expect(results.map((r) => r.status)).toEqual([200, 200]);
     expect(g.counts.refresh).toBe(1);
+
+    // The second 401 comes back after the first refresh is done. It must not refresh again.
+    let calls = 0;
+    const slowSecond: typeof fetch = async (input, init) => {
+      const res = await fetch(input, init);
+      if (String(input).includes("/gmail/") && ++calls === 2) await new Promise((done) => setTimeout(done, 200));
+      return res;
+    };
+    const late = await clocked({ link: { fetch: slowSecond } });
+    await late.link.connect();
+    late.g.expireAccessTokens();
+    expect((await Promise.all([late.list(), late.list()])).map((r) => r.status)).toEqual([200, 200]);
+    expect(late.g.counts.refresh).toBe(1);
   });
 
   it("T7: a revoked refresh token forgets the tokens and asks to reconnect", async () => {
