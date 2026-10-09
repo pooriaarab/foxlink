@@ -236,6 +236,9 @@ pnpm build:ext   # builds dist-ext/; load it from about:debugging
 pnpm e2e         # runs the demo in Firefox against the local fake Google
 ```
 
+Install from AMO: [addons.mozilla.org/firefox/addon/foxlink](https://addons.mozilla.org/firefox/addon/foxlink/)
+(pending AMO review; the link works after approval).
+
 ### Use your own Google client ID
 
 We have not tested foxlink with a real Google account. We tested it against
@@ -254,7 +257,7 @@ endpoints and REST shapes. These are the steps to try the real Google:
    **Desktop app**. Google accepts loopback redirect URIs for this type.
    Copy the client ID and the client secret.
 6. In the demo Settings, paste the client ID and the client secret. Leave
-   the test server port empty. Select **Save**, then **Connect Google**.
+   the local server port empty. Select **Save**, then **Connect Google**.
 
 If Google refuses the redirect URI, make a **Web application** client
 instead. Add the redirect URI that the demo Settings show under

@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>foxlink demo</title>
+    <title>foxlink</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
@@ -11,7 +11,7 @@
       <summary>Settings</summary>
       <label>OAuth client ID <input id="client-id" autocomplete="off" /></label>
       <label>Client secret (if Google gave one) <input id="client-secret" type="password" autocomplete="off" /></label>
-      <label>Test server port (empty: Google) <input id="test-port" inputmode="numeric" /></label>
+      <label>Local server port (empty: Google) <input id="test-port" inputmode="numeric" /></label>
       <label class="row"><input id="allow-send" type="checkbox" /> Ask for the Gmail send scope</label>
       <p>Redirect URI to register: <code id="redirect"></code></p>
       <button id="save">Save</button>
