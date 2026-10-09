@@ -51,7 +51,7 @@ what is not tested against the real Google.
 | T12 | `link.fetch` gets a URL on a host that is not an API host, or `http:`. | It throws `bad-host` and sends no token. | `tokens.test.ts` T12 |
 | T13 | The vault is locked (passphrase mode). | The call throws the vault error `locked`. foxlink sends no request. | `tokens.test.ts` T13 |
 | T14 | `connect` runs while a refresh of the old grant is still running. The refresh ends later and writes the old token and the old scopes over the new ones. | A refresh that started before a `connect` or a `disconnect` throws its result away. The new scopes stay. | `tokens.test.ts` T14 |
-| T15 | `disconnect` runs while a refresh is still running. The refresh ends later and writes a token back. | foxlink revokes the late token and stores nothing. `status()` says not connected. | `tokens.test.ts` T15 |
+| T15 | `disconnect` runs while a refresh is still running. The refresh ends later and writes a token back. | foxlink throws the late token away and stores nothing. The call throws `not-connected`. `status()` says not connected. | `tokens.test.ts` T15 |
 | T16 | A short-lived token (`expires_in` of 60 seconds or less) is refreshed before every call, because the 60-second margin covers its whole life. | The margin is at most half of the token life. Two calls 10 seconds apart send no refresh. | `tokens.test.ts` T16 |
 
 ## Leaks (L)
