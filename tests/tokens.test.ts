@@ -1,9 +1,9 @@
-// Failure modes T1-T13, L1-L4, and O15 in docs/failure-modes.md: tokens.
+// Failure modes T1-T16, L1-L4, and O15 in docs/failure-modes.md: tokens.
 import { createVault } from "foxvault";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { nodeAuthFlow } from "../e2e/fake-google.mjs";
 import { createLink, googleProvider } from "../src/index.js";
-import { CLIENT_ID, REDIRECT, leaks, recordingStore, rejects, setup } from "./helpers.js";
+import { CLIENT_ID, REDIRECT, SCOPE, leaks, recordingStore, rejects, setup } from "./helpers.js";
 
 const HOUR = 3_600_000;
 const always401: typeof fetch = async (input, init) => (String(input).includes("/gmail/") ? new Response("{}", { status: 401 }) : fetch(input, init));
@@ -187,6 +187,51 @@ describe("tokens", () => {
     const before = g.log.length;
     await rejects(() => link.fetch(`${g.endpoints.gmailBase}/users/me/messages`), "locked");
     expect(g.log.length).toBe(before);
+  });
+
+  it("T14: a connect during a refresh keeps the new scopes", async () => {
+    const { g, link, clock, list } = await clocked({ provider: { allowedScopes: [SCOPE.gmailRead, SCOPE.calRead, SCOPE.gmailSend] } });
+    await link.connect();
+    g.behavior.tokenDelayMs = 300;
+    clock.t += HOUR;
+    const late = list().catch(() => null);
+    await new Promise((done) => setTimeout(done, 50));
+    g.behavior.tokenDelayMs = 0;
+    const status = await link.connect({ scopes: [SCOPE.gmailRead, SCOPE.gmailSend] });
+    await late;
+    expect(status.scopes).toEqual([SCOPE.gmailRead, SCOPE.gmailSend]);
+    expect((await link.status()).scopes).toEqual([SCOPE.gmailRead, SCOPE.gmailSend]);
+    expect(await link.hasScope(SCOPE.gmailSend)).toBe(true);
+  });
+
+  it("T15: a disconnect during a refresh stores nothing after it", async () => {
+    const { g, link, vault, clock, list } = await clocked();
+    await link.connect();
+    g.behavior.tokenDelayMs = 300;
+    clock.t += HOUR;
+    const late = list().catch((e: unknown) => e);
+    await new Promise((done) => setTimeout(done, 50));
+    await link.disconnect();
+    expect(await late).toMatchObject({ code: "not-connected" });
+    expect(g.counts.refresh).toBe(1);
+    expect((await link.status()).connected).toBe(false);
+    expect(await vault.list()).toEqual([]);
+    const lastAccess = g.issued.filter((v: string) => v.startsWith("ya29.")).at(-1) ?? "";
+    const res = await fetch(`${g.endpoints.gmailBase}/users/me/messages`, { headers: { authorization: `Bearer ${lastAccess}` } });
+    expect(res.status).toBe(401);
+  });
+
+  it("T16: a 60-second token is not refreshed before every call", async () => {
+    const { g, link, clock, list } = await clocked();
+    g.behavior.expiresIn = 60;
+    await link.connect();
+    await list();
+    clock.t += 10_000;
+    await list();
+    expect(g.counts.refresh).toBe(0);
+    clock.t += 25_000;
+    await list();
+    expect(g.counts.refresh).toBe(1);
   });
 
   it("L1-L4: no token in errors, the store, results, or the console", async () => {

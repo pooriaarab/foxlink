@@ -42,6 +42,7 @@ export interface LinkStatus {
 
 interface TokenRecord {
   scopes: string[];
+  issuedAt: number;
   expiresAt: number;
   refreshable: boolean;
 }
@@ -107,7 +108,7 @@ export function createLink(options: LinkOptions) {
 
   const readRecord = async (): Promise<TokenRecord | undefined> => {
     const value = (await store.get(key)) as TokenRecord | undefined;
-    return value && typeof value === "object" && Array.isArray(value.scopes) && typeof value.expiresAt === "number" ? value : undefined;
+    return value && typeof value === "object" && Array.isArray(value.scopes) && typeof value.expiresAt === "number" && typeof value.issuedAt === "number" ? value : undefined;
   };
 
   /** POST a form. It never throws, so it can run inside vault.use. */
@@ -141,7 +142,8 @@ export function createLink(options: LinkOptions) {
       await vault.remove(handles.refresh);
     }
     const refreshable = (await vault.list()).some((s) => s.handle === handles.refresh);
-    const record: TokenRecord = { scopes, expiresAt: now() + lifetimeMs(tokens.expires_in), refreshable };
+    const issuedAt = now();
+    const record: TokenRecord = { scopes, issuedAt, expiresAt: issuedAt + lifetimeMs(tokens.expires_in), refreshable };
     await store.set(key, record);
     return record;
   }
@@ -162,6 +164,8 @@ export function createLink(options: LinkOptions) {
   async function connect(request: { scopes?: string[]; interactive?: boolean } = {}): Promise<LinkStatus> {
     if (connecting) throw new FoxlinkError("busy", "A connect is already running.");
     connecting = true;
+    // A refresh that is still running belongs to the old grant. It throws its result away.
+    generation += 1;
     try {
       const scopes = [...new Set(request.scopes ?? provider.scopes)];
       if (scopes.length === 0 || !scopes.every((s) => provider.allowedScopes.includes(s))) {
@@ -213,6 +217,8 @@ export function createLink(options: LinkOptions) {
         await revokeQuietly(tokens.refresh_token ?? tokens.access_token);
         throw refused;
       }
+      if (refreshing) await refreshing.catch(() => undefined);
+      generation += 1;
       await save(tokens, granted, true);
       return await status();
     } finally {
@@ -228,6 +234,7 @@ export function createLink(options: LinkOptions) {
   }
 
   async function doRefresh() {
+    const started = generation;
     const record = await readRecord();
     if (!record) throw new FoxlinkError("not-connected", "Connect first.");
     if (!record.refreshable) {
@@ -239,6 +246,8 @@ export function createLink(options: LinkOptions) {
       await forget();
       throw new FoxlinkError("reconnect", "The provider refused the refresh token. Connect again.", { status: result.status, oauthError: "invalid_grant" });
     }
+    // A connect or a disconnect ran meanwhile. This token is from a grant that foxlink no longer keeps.
+    if (generation !== started) return;
     const tokens = tokenResult(result);
     // A refresh cannot add scopes. Keep the ones that both lists hold.
     const granted = typeof tokens.scope === "string" ? tokens.scope.split(" ").filter((s) => record.scopes.includes(s)) : record.scopes;
@@ -287,11 +296,15 @@ export function createLink(options: LinkOptions) {
     if (!httpOk || !provider.apiHosts.includes(url.hostname)) throw new FoxlinkError("bad-host", `${url.hostname} is not an API host of this provider.`);
     const record = await readRecord();
     if (!record) throw new FoxlinkError("not-connected", "Connect first.");
-    if (now() >= record.expiresAt - (options.skewMs ?? 60_000)) await refresh();
+    // The margin is at most half of the token life, so a short-lived token is not refreshed before every call.
+    const margin = Math.min(options.skewMs ?? 60_000, (record.expiresAt - record.issuedAt) / 2);
+    if (now() >= record.expiresAt - margin) await refresh();
+    if (!(await readRecord())) throw new FoxlinkError("not-connected", "Connect first.");
     const seen = generation;
     const first = await send(url, init);
     if (first.status !== 401) return first;
     if (seen === generation) await refresh();
+    if (!(await readRecord())) throw new FoxlinkError("not-connected", "Connect first.");
     const second = await send(url, init);
     if (second.status === 401) throw new FoxlinkError("unauthorized", "The provider refused the new access token.", { status: 401 });
     return second;
