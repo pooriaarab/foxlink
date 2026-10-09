@@ -23,15 +23,20 @@ const DROP = new Set(["script", "style", "head", "title", "noscript", "template"
 const BREAK = new Set(["br", "hr"]);
 const BLOCK_END = new Set(["p", "div", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "table", "blockquote", "section", "article"]);
 
-/** The index of the ">" that ends the tag at `from`, outside quotes, or the end of the text. One pass. */
+/**
+ * The index of the ">" that ends the tag at `from`, or the end of the text. One pass.
+ * A quote opens a quoted value only right after "=", as in HTML, so `title=it's` has no quote.
+ */
 function tagEnd(html: string, from: number): number {
   let quote = "";
+  let last = "";
   for (let j = from; j < html.length; j += 1) {
-    const c = html[j];
+    const c = html[j] ?? "";
     if (quote) {
       if (c === quote) quote = "";
-    } else if (c === '"' || c === "'") quote = c;
+    } else if ((c === '"' || c === "'") && last === "=") quote = c;
     else if (c === ">") return j;
+    if (!/\s/.test(c)) last = c;
   }
   return html.length;
 }
@@ -67,7 +72,8 @@ export function htmlToText(html: string): string {
     const tag = (name[2] ?? "").toLowerCase();
     i = tagEnd(html, lt + 1) + 1;
     if (!closing && DROP.has(tag)) {
-      const find = new RegExp(`</${tag}`, "gi");
+      // Only a real close tag ends the block: "</scriptx>" does not.
+      const find = new RegExp(`</${tag}(?=[\\s/>]|$)`, "gi");
       find.lastIndex = i;
       const close = find.exec(html)?.index ?? -1;
       i = close === -1 ? html.length : tagEnd(html, close) + 1;
