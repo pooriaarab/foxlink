@@ -69,6 +69,7 @@ docs/failure-modes.md  every way the code can fail, written before the code
 extension/        the demo extension that shows this repo working in Firefox
 scripts/build-ext.mjs  bundles extension/ into dist-ext/ with esbuild
 e2e/run.mjs       the Firefox E2E test; writes artifacts/e2e-<date>.json
+e2e/fake-google.mjs  the fake Google (OAuth, Gmail, Calendar) that tests run against
 ```
 
 ## Commands
