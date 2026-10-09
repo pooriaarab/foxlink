@@ -90,6 +90,7 @@ try {
   });
   check("E8: send asks first", "Waiting for approval", await press(popup, "#send"));
   const pending = await popup.evaluate(() => document.getElementById("pending").textContent);
+  record.approvalText = pending;
   check("E8: the approval shows the exact message", true, pending.includes('"to":"bob@example.com"') && pending.includes('"subject":"Hello from foxlink"') && pending.includes('"body":"This is a test."'));
   check("E8: nothing was sent before approval", 0, g.sent.length);
   check("E8: approve sends it", "Sent", await press(popup, "#approve"));
