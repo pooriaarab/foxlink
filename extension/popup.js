@@ -67,6 +67,9 @@ for (const [id, run] of Object.entries(actions)) {
   $(id).addEventListener("click", () => run().catch((error) => show("result", error.message)));
 }
 
+// Only the e2e build (build-ext.mjs --e2e) talks to a local server.
+if (globalThis.FOXLINK_E2E) $("local-server").hidden = false;
+
 call("getSettings").then((s) => {
   $("client-id").value = s.clientId;
   $("client-secret").value = s.clientSecret;
