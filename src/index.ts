@@ -11,3 +11,5 @@ export {
   type ProviderOptions,
 } from "./provider.js";
 export { createLink, type IdentityLike, type Link, type LinkOptions, type LinkStatus } from "./link.js";
+export { gmail, messageText, type Gmail, type Message, type MessageSummary } from "./gmail.js";
+export { decodeEntities, htmlToText, toPromptText, type Untrusted } from "./text.js";

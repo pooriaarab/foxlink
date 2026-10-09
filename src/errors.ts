@@ -14,7 +14,9 @@ export type FoxlinkErrorCode =
   | "reconnect"
   | "unauthorized"
   | "bad-host"
-  | "http-error";
+  | "http-error"
+  | "missing-scope"
+  | "bad-input";
 
 export class FoxlinkError extends Error {
   readonly code: FoxlinkErrorCode;

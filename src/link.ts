@@ -1,7 +1,7 @@
 import { memoryStore, type Store } from "foxgate";
 import type { Vault } from "foxvault";
 import { FoxlinkError, safeCode } from "./errors.js";
-import { loopbackRedirectUrl, type Provider } from "./provider.js";
+import { loopbackRedirectUrl, type GoogleEndpoints, type Provider } from "./provider.js";
 
 /** The parts of `browser.identity` that foxlink uses. */
 export interface IdentityLike {
@@ -10,7 +10,8 @@ export interface IdentityLike {
 }
 
 export interface LinkOptions {
-  provider: Provider;
+  /** From `defineProvider` or `googleProvider`. */
+  provider: Provider & { readonly endpoints?: Readonly<GoogleEndpoints> };
   /** A foxvault vault. It keeps the access token and the refresh token. */
   vault: Vault;
   /** Where the token record (scopes and expiry, no tokens) lives. Default: memoryStore(). */
@@ -316,6 +317,7 @@ export function createLink(options: LinkOptions) {
   }
 
   return Object.freeze({
+    provider,
     connect,
     status,
     fetch: authorizedFetch,
