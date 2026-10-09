@@ -93,6 +93,9 @@ export function createLink(options: LinkOptions) {
   const handles = { access: `vault:flk-${provider.id}-access`, refresh: `vault:flk-${provider.id}-refresh` };
   const tokenHosts = [...new Set([provider.tokenUrl, provider.revokeUrl ?? provider.tokenUrl].map((u) => new URL(u).hostname))];
   let connecting = false;
+  let refreshing: Promise<void> | undefined;
+  /** Goes up by one with each new access token, so two 401s for one token send one refresh. */
+  let generation = 0;
 
   const redirectUri = () => {
     if (options.redirectUri) return options.redirectUri;
@@ -103,13 +106,13 @@ export function createLink(options: LinkOptions) {
 
   const readRecord = async (): Promise<TokenRecord | undefined> => {
     const value = (await store.get(key)) as TokenRecord | undefined;
-    return value && Array.isArray(value.scopes) && typeof value.expiresAt === "number" ? value : undefined;
+    return value && typeof value === "object" && Array.isArray(value.scopes) && typeof value.expiresAt === "number" ? value : undefined;
   };
 
   /** POST a form. It never throws, so it can run inside vault.use. */
-  async function postForm(url: string, params: Record<string, string>): Promise<FormResult> {
-    const body = new URLSearchParams({ client_id: provider.clientId, ...params });
-    if (provider.clientSecret) body.set("client_secret", provider.clientSecret);
+  async function postForm(url: string, params: Record<string, string>, asClient = true): Promise<FormResult> {
+    const body = new URLSearchParams(asClient ? { client_id: provider.clientId, ...params } : params);
+    if (asClient && provider.clientSecret) body.set("client_secret", provider.clientSecret);
     try {
       const res = await doFetch(url, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: body.toString() });
       const parsed: unknown = await res.json().catch(() => ({}));
@@ -121,7 +124,7 @@ export function createLink(options: LinkOptions) {
 
   /** Revoke a token that foxlink will not keep. Errors are ignored: the token is dropped either way. */
   async function revokeQuietly(token: string | undefined) {
-    if (provider.revokeUrl && token) await postForm(provider.revokeUrl, { token });
+    if (provider.revokeUrl && token) await postForm(provider.revokeUrl, { token }, false);
   }
 
   async function save(tokens: TokenResponse, scopes: string[], replaceRefresh: boolean) {
@@ -216,6 +219,96 @@ export function createLink(options: LinkOptions) {
     }
   }
 
+  async function forget() {
+    await vault.remove(handles.access);
+    await vault.remove(handles.refresh);
+    await store.set(key, null);
+    generation += 1;
+  }
+
+  async function doRefresh() {
+    const record = await readRecord();
+    if (!record) throw new FoxlinkError("not-connected", "Connect first.");
+    if (!record.refreshable) {
+      await forget();
+      throw new FoxlinkError("reconnect", "The access token expired and there is no refresh token. Connect again.");
+    }
+    const result = await vault.use(handles.refresh, (token) => postForm(provider.tokenUrl, { grant_type: "refresh_token", refresh_token: token }));
+    if (result.status >= 400 && result.status < 500 && safeCode(result.body.error) === "invalid_grant") {
+      await forget();
+      throw new FoxlinkError("reconnect", "The provider refused the refresh token. Connect again.", { status: result.status, oauthError: "invalid_grant" });
+    }
+    const tokens = tokenResult(result);
+    // A refresh cannot add scopes. Keep the ones that both lists hold.
+    const granted = typeof tokens.scope === "string" ? tokens.scope.split(" ").filter((s) => record.scopes.includes(s)) : record.scopes;
+    await save(tokens, granted, false);
+    generation += 1;
+  }
+
+  /** Refresh the access token. Calls at the same time share one request. */
+  function refresh(): Promise<void> {
+    refreshing ??= doRefresh().finally(() => {
+      refreshing = undefined;
+    });
+    return refreshing;
+  }
+
+  async function sendOnce(url: URL, init: RequestInit): Promise<Response> {
+    const headers = new Headers(init.headers);
+    headers.delete("authorization");
+    if (transport === "inject") return doFetch(url.href, { ...init, headers });
+    const out = await vault.use(handles.access, async (token) => {
+      headers.set("authorization", `Bearer ${token}`);
+      try {
+        return { response: await doFetch(url.href, { ...init, headers }) };
+      } catch {
+        return { response: undefined };
+      }
+    });
+    if (!out.response) throw new FoxlinkError("http-error", `The request to ${url.hostname} failed.`, { status: 0 });
+    return out.response;
+  }
+
+  async function send(url: URL, init: RequestInit) {
+    if (refreshing) await refreshing;
+    return sendOnce(url, init);
+  }
+
+  /** fetch for the API hosts, with the access token. It refreshes on expiry and one time on 401. */
+  async function authorizedFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
+    let url: URL;
+    try {
+      url = new URL(String(input));
+    } catch {
+      throw new FoxlinkError("bad-host", "Not a URL.");
+    }
+    const httpOk = url.protocol === "https:" || (provider.allowHttp && url.protocol === "http:");
+    if (!httpOk || !provider.apiHosts.includes(url.hostname)) throw new FoxlinkError("bad-host", `${url.hostname} is not an API host of this provider.`);
+    const record = await readRecord();
+    if (!record) throw new FoxlinkError("not-connected", "Connect first.");
+    if (now() >= record.expiresAt - (options.skewMs ?? 60_000)) await refresh();
+    const seen = generation;
+    const first = await send(url, init);
+    if (first.status !== 401) return first;
+    if (seen === generation) await refresh();
+    const second = await send(url, init);
+    if (second.status === 401) throw new FoxlinkError("unauthorized", "The provider refused the new access token.", { status: 401 });
+    return second;
+  }
+
+  /** Revoke the grant at the provider, then forget every token. It forgets them also when the revoke fails. */
+  async function disconnect(): Promise<{ revoked: boolean }> {
+    let revoked = false;
+    const held = new Set((await vault.list()).map((s) => s.handle));
+    const handle = held.has(handles.refresh) ? handles.refresh : held.has(handles.access) ? handles.access : undefined;
+    if (provider.revokeUrl && handle) {
+      const revokeUrl = provider.revokeUrl;
+      revoked = (await vault.use(handle, (token) => postForm(revokeUrl, { token }, false))).ok;
+    }
+    await forget();
+    return { revoked };
+  }
+
   async function status(): Promise<LinkStatus> {
     const record = await readRecord();
     if (!record) return { connected: false, scopes: [] };
@@ -225,6 +318,8 @@ export function createLink(options: LinkOptions) {
   return Object.freeze({
     connect,
     status,
+    fetch: authorizedFetch,
+    disconnect,
     /** True when the user granted this scope. */
     hasScope: async (scope: string) => Boolean((await readRecord())?.scopes.includes(scope)),
     /** The redirect URI to register with the provider. */
