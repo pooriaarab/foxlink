@@ -130,10 +130,12 @@ export async function startFakeGoogle({ now = Date.now } = {}) {
     return `${b64url(JSON.stringify({ alg: "RS256", typ: "JWT" }))}.${b64url(JSON.stringify(claims))}.fake-signature`;
   }
 
+  // The delay comes after the server made the tokens, as with a slow network on the way back.
+  const slow = () => new Promise((done) => setTimeout(done, behavior.tokenDelayMs));
+
   async function token(req, res) {
     counts.token += 1;
     const p = new URLSearchParams(await readBody(req));
-    if (behavior.tokenDelayMs) await new Promise((done) => setTimeout(done, behavior.tokenDelayMs));
     if (behavior.tokenStatus !== 200) return oauthError(res, behavior.tokenStatus, "internal_failure", "Try again later.");
     const client = clients.get(p.get("client_id"));
     if (!client || (client.secret && p.get("client_secret") !== client.secret)) return oauthError(res, 401, "invalid_client", "Unauthorized");
@@ -154,6 +156,7 @@ export async function startFakeGoogle({ now = Date.now } = {}) {
       const body = { access_token: issueAccess(scopes, refresh), expires_in: behavior.expiresIn, scope: scopes.join(" "), token_type: "Bearer" };
       if (refresh) body.refresh_token = refresh;
       if (scopes.includes("openid")) body.id_token = idToken(client, code.nonce);
+      await slow();
       return json(res, 200, body);
     }
     if (p.get("grant_type") === "refresh_token") {
@@ -170,6 +173,7 @@ export async function startFakeGoogle({ now = Date.now } = {}) {
       }
       const body = { access_token: issueAccess(grant.scopes, refresh), expires_in: behavior.expiresIn, scope: grant.scopes.join(" "), token_type: "Bearer" };
       if (refresh !== old) body.refresh_token = refresh;
+      await slow();
       return json(res, 200, body);
     }
     return oauthError(res, 400, "unsupported_grant_type", "Invalid grant_type.");
