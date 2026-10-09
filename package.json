@@ -1,5 +1,5 @@
 {
-  "name": "@pooriaarab/foxlink",
+  "name": "foxlink-oauth",
   "version": "0.1.0",
   "description": "Connect Gmail and Google Calendar to a Firefox extension with OAuth.",
   "type": "module",
