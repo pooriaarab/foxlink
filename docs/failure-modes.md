@@ -28,8 +28,10 @@ what is not tested against the real Google.
 | O11 | Scope creep from the caller: `connect` asks for a scope that the provider config does not allow. | `connect` throws `bad-scope` before the browser opens a window. | `connect.test.ts` O11 |
 | O12 | The user grants only part of the scopes (Google granular consent). | `connect` works. `status()` shows the granted scopes only. A call that needs a scope that is not granted gets `missing-scope`, with no request. | `connect.test.ts` O12, `gmail.test.ts` G1 |
 | O13 | OpenID: the ID token has a different `nonce` or `aud`. | `connect` revokes the token, stores nothing, and throws `id-token`. | `connect.test.ts` O13 |
-| O14 | A provider config uses `http:` for an endpoint. | `createLink` throws `bad-config`, unless `allowHttp` is set (for test servers only). | `connect.test.ts` O14 |
+| O14 | A provider config uses `http:` for an endpoint, has no client ID, or has default scopes outside `allowedScopes`. | `googleProvider` and `defineProvider` throw `bad-config`. `http:` works only with `allowHttp` (for test servers only). | `provider.test.ts` O14 |
 | O15 | The token response has no refresh token. | `connect` works. When the access token expires, calls throw `reconnect`. | `tokens.test.ts` T7 |
+| O16 | The Google preset asks for a write scope by default. | The default scopes are `gmail.readonly` and `calendar.readonly`. Send and write scopes come only from `scopes` or `allowedScopes`. | `provider.test.ts` O16 |
+| O17 | Google refuses the `*.extensions.allizom.org` redirect URL, because nobody can verify that domain. | The Google preset uses the Firefox loopback form `http://127.0.0.1/mozoauth2/<subdomain>`, made from `identity.getRedirectURL()`. | `provider.test.ts` O17 |
 
 ## Tokens (T)
 
