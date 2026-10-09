@@ -74,6 +74,14 @@ what is not tested against the real Google.
 | M7 | Header injection in send: `to` or `subject` has a CR or LF. | `sendMessage` refuses with `bad-input`. | `send.test.ts` S6 |
 | M8 | A subject has non-ASCII characters. | The subject is RFC 2047 encoded. | `send.test.ts` S2 |
 
+## Calendar (C)
+
+| # | Failure mode | Wanted behaviour | Test |
+|---|---|---|---|
+| C1 | `listEvents` returns past events, or too many. | It starts at `timeMin` (default: now), sorts by start time, and keeps `max` between 1 and 50. | `send.test.ts` C1 |
+| C2 | An event description has HTML or a prompt injection. | The description is plain text, and the event has `trust: "untrusted"`. | `send.test.ts` C2 |
+| C3 | No Calendar scope. | `listEvents` throws `missing-scope`, with no request. | `send.test.ts` C3 |
+
 ## Paging (P)
 
 | # | Failure mode | Wanted behaviour | Test |
