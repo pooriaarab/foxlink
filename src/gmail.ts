@@ -59,9 +59,28 @@ function validMessage(m: OutgoingMessage): boolean {
   return !hasControl(m.to) && !hasControl(m.subject) && m.subject.length <= 500 && m.body.length <= 100_000;
 }
 
+/**
+ * RFC 2047 encoded words of 75 characters at most, folded on new lines. Each
+ * word holds whole characters (45 bytes at most), so no character is split.
+ */
+function encodedWords(text: string): string {
+  const words: string[] = [];
+  let chunk = "";
+  for (const char of text) {
+    if (new TextEncoder().encode(chunk + char).length > 45) {
+      words.push(chunk);
+      chunk = "";
+    }
+    chunk += char;
+  }
+  if (chunk) words.push(chunk);
+  return words.map((w) => `=?UTF-8?B?${b64(w)}?=`).join("\r\n ");
+}
+
 /** An RFC 5322 message with a UTF-8 text body. A non-ASCII subject is RFC 2047 encoded. */
 function mime(m: OutgoingMessage): string {
-  const subject = /^[\x20-\x7e]*$/.test(m.subject) ? m.subject : `=?UTF-8?B?${b64(m.subject)}?=`;
+  const plain = /^[\x20-\x7e]*$/.test(m.subject) && !m.subject.includes("=?");
+  const subject = plain ? m.subject : encodedWords(m.subject);
   const body = (b64(m.body).match(/.{1,76}/g) ?? []).join("\r\n");
   return [`To: ${m.to.split(",").map((a) => a.trim()).join(", ")}`, `Subject: ${subject}`, "MIME-Version: 1.0", 'Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: base64", "", body].join("\r\n");
 }

@@ -11,6 +11,14 @@ const event1 = { summary: "Dentist", start: "2026-10-12T09:00:00Z", end: "2026-1
 /** An RFC 3339 time h hours from now. */
 const at = (h: number) => new Date(Date.now() + h * 3_600_000).toISOString();
 
+/** The Subject header of a raw message, unfolded and decoded. */
+function subjectOf(raw: string) {
+  const header = (/\r\nSubject: (.*?)\r\n(?! )/s.exec(`\r\n${raw}`)?.[1] ?? "").replace(/\r\n /g, " ");
+  const words = header.split(" ");
+  if (!words.every((w) => /^=\?UTF-8\?B\?[A-Za-z0-9+/=]*\?=$/.test(w))) return { text: header, words };
+  return { text: Buffer.concat(words.map((w) => Buffer.from(w.slice(10, -2), "base64"))).toString(), words };
+}
+
 async function gated(options: { scopes?: string[]; gate?: boolean } = {}) {
   const env = await setup({ provider: { allowedScopes: WRITE } });
   await env.link.connect({ scopes: options.scopes ?? WRITE });
@@ -44,6 +52,26 @@ describe("gated writes", () => {
     expect(raw).toContain(`Subject: =?UTF-8?B?${Buffer.from(mail1.subject).toString("base64")}?=\r\n`);
     expect(raw).toContain('Content-Type: text/plain; charset="UTF-8"');
     expect(Buffer.from(raw.split("\r\n\r\n")[1] ?? "", "base64").toString()).toBe(mail1.body);
+  });
+
+  it("M12, M13: the recipient sees the approved subject, within RFC limits", async () => {
+    const { mail, host, g } = await gated();
+    const send = async (subject: string) => {
+      const message = { ...mail1, subject };
+      const asked = await mail.sendMessage(message);
+      const token = await host.approve(asked.status === "ask" ? asked.requestId : "");
+      expect((await mail.sendMessage(message, { token })).status).toBe("sent");
+      return g.sent.at(-1).raw as string;
+    };
+    const lookalike = "=?UTF-8?B?SW52b2ljZSBwYWlk?=";
+    expect(subjectOf(await send(lookalike)).text).toBe(lookalike);
+    expect(subjectOf(await send("Plain subject")).text).toBe("Plain subject");
+    const long = "\u00e9\u2615\u{1f98a}".repeat(125);
+    const raw = await send(long);
+    const { text, words } = subjectOf(raw);
+    expect(text).toBe(long);
+    expect(Math.max(...words.map((w) => w.length))).toBeLessThanOrEqual(75);
+    expect(Math.max(...raw.split("\r\n").map((l) => l.length))).toBeLessThanOrEqual(998);
   });
 
   it("S3: a token for one message cannot send another", async () => {
