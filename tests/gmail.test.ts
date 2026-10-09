@@ -1,6 +1,6 @@
 // Failure modes M1-M6, P1-P3, and G1 (O12) in docs/failure-modes.md: reading Gmail.
 import { describe, expect, it } from "vitest";
-import { gmail, toPromptText } from "../src/index.js";
+import { gmail, htmlToText, toPromptText } from "../src/index.js";
 import { SCOPE, rejects, setup } from "./helpers.js";
 
 const DATE = "Thu, 08 Oct 2026 10:00:00 +0000";
@@ -30,6 +30,18 @@ describe("gmail read", () => {
     const html = "<p>&lt;script&gt;alert(1)&lt;/script&gt; &amp;lt;b&amp;gt; &#169; &#x263A; caf&eacute;&nbsp;bar</p>";
     const { mail } = await connected([{ id: "e1", from: "a@example.com", to: "me@example.com", subject: "E", date: DATE, html }]);
     expect((await mail.getMessage("e1")).text).toBe("<script>alert(1)</script> &lt;b&gt; © ☺ café bar");
+  });
+
+  it("M9: hostile HTML is converted in one pass", () => {
+    const MB = 1_000_000;
+    for (const unit of ['<a href="', "<a href='x", "<script>", "<style><p>", "<!--", "<b x='1' y=\"2\">t</b>", "<<<<"]) {
+      const html = unit.repeat(Math.ceil(MB / unit.length));
+      const started = performance.now();
+      htmlToText(html);
+      expect(performance.now() - started, unit).toBeLessThan(1000);
+    }
+    expect(htmlToText('a < b and <3, <a href="x>y">link</a> done')).toBe("a < b and <3, link done");
+    expect(htmlToText("<p>one<SCRIPT>bad()</ScRiPt >two</p><style>x")).toBe("onetwo");
   });
 
   it("M4, M5: the text/plain part wins, attachments are skipped, and UTF-8 base64url decodes", async () => {
