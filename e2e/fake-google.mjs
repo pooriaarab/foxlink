@@ -61,6 +61,7 @@ export async function startFakeGoogle({ now = Date.now } = {}) {
   const log = [];
   const issued = []; // every token, code, and secret the server gave out, for leak scans
   const counts = { token: 0, refresh: 0, revoke: 0, pixel: 0 };
+  /** @type {{ consent: string, grantOnly: string[] | null, state: string, extraScope: string | null, errorDescription: string | null, expiresIn: unknown, tokenDelayMs: number, tokenStatus: number, revokeStatus: number, rotateRefresh: boolean, noRefreshToken: boolean, idToken: Record<string, unknown> }} */
   const behavior = {
     consent: "auto", // "auto" (302 at once) | "page" (consent page that goes on by itself) | "deny"
     grantOnly: null, // a list of scopes: the user unticks the others (granular consent)
@@ -284,6 +285,7 @@ export async function startFakeGoogle({ now = Date.now } = {}) {
     counts,
     sent,
     events,
+    /** @param {{ id: string, secret?: string, redirectUris: string[] }} client */
     addClient({ id, secret, redirectUris }) {
       clients.set(id, { id, secret, redirectUris });
       if (secret) issued.push(secret);
