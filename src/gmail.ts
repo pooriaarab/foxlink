@@ -1,6 +1,6 @@
 import type { Gate } from "foxgate";
 import { FoxlinkError } from "./errors.js";
-import { FOXLINK_TOOLS, gated, hasControl, type Asked, type Refused } from "./gated.js";
+import { gated, hasControl, withScope, type Asked, type Refused } from "./gated.js";
 import type { Link } from "./link.js";
 import { GOOGLE_ENDPOINTS, GOOGLE_SCOPES } from "./provider.js";
 import { htmlToText, type Untrusted } from "./text.js";
@@ -36,27 +36,74 @@ interface MessageResource {
   payload?: Part;
 }
 
+/** `filename`: ASCII letters, digits, spaces, and `_ . ( ) + , -`. `mimeType`: for example `application/pdf`. */
+export type Attachment = { filename: string; mimeType: string; data: Uint8Array };
+
 export interface OutgoingMessage {
-  /** One address, or up to 10 addresses with commas between them. */
+  /** One address, or addresses with commas between them. `to`, `cc`, and `bcc` hold 20 addresses at most together. */
   to: string;
+  cc?: string;
+  bcc?: string;
   subject: string;
-  /** Plain text. */
+  /** Plain text, 40,000 characters at most. */
   body: string;
+  /** 10 files and 3 MB at most. */
+  attachments?: Attachment[];
 }
 
-const SEND_SCOPES = [GOOGLE_SCOPES.gmailSend, "https://www.googleapis.com/auth/gmail.modify", "https://mail.google.com/"];
+/** Where foxlink records each write. A foxtrail `Log` fits. */
+export type TrailLike = { append(entry: { actor: string; kind: string; data: Record<string, unknown> }): Promise<unknown> };
+
+export interface GmailOptions {
+  baseUrl?: string;
+  gate?: Gate;
+  trail?: TrailLike;
+  /** `sendMessage` refuses with `draft-only`. `createDraft` still works. */
+  draftOnly?: boolean;
+  /** True while the run is in private-data mode. Then every send and draft needs an approval that says `privateData: true`. */
+  privateMode?: () => boolean | Promise<boolean>;
+}
+
+/** `logged: false` when the trail write failed. The mail went out anyway. */
+type Written<S> = { status: S; id: string; sha256: string; logged?: false };
+
+/** The args that the human approves. Attachments go in as name, type, size, and hash. */
+type Args = { to: string[]; cc: string[]; bcc: string[]; subject: string; body: string; attachments: { filename: string; mimeType: string; size: number; sha256: string }[] };
+
+const COMPOSE = [GOOGLE_SCOPES.gmailCompose, "https://www.googleapis.com/auth/gmail.modify", "https://mail.google.com/"];
+const SEND_SCOPES = [GOOGLE_SCOPES.gmailSend, ...COMPOSE];
 const ADDRESS = /^[^\s@<>,;:"()[\]\\]+@[^\s@<>,;:"()[\]\\]+\.[^\s@<>,;:"()[\]\\]+$/;
-const b64 = (text: string) => {
+const FILENAME = /^[\w .()+,-]{1,200}$/;
+const MIME_TYPE = /^[a-z0-9][a-z0-9.+-]*\/[a-z0-9][a-z0-9.+-]*$/i;
+const BOUNDARY = "=_foxlink_mixed";
+const utf8 = (text: string) => new TextEncoder().encode(text);
+const b64bytes = (bytes: Uint8Array) => {
   let binary = "";
-  for (const byte of new TextEncoder().encode(text)) binary += String.fromCharCode(byte);
+  for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
 };
+const b64 = (text: string) => b64bytes(utf8(text));
+const lines = (base64: string) => (base64.match(/.{1,76}/g) ?? []).join("\r\n");
+const hex = async (bytes: Uint8Array) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>)), (b) => b.toString(16).padStart(2, "0")).join("");
+const addresses = (value: unknown) => (value === undefined || value === "" ? [] : typeof value === "string" && !hasControl(value) ? value.split(",").map((a) => a.trim()) : undefined);
 
-function validMessage(m: OutgoingMessage): boolean {
-  if (!m || typeof m.to !== "string" || typeof m.subject !== "string" || typeof m.body !== "string") return false;
-  const to = m.to.split(",").map((a) => a.trim());
-  if (to.length > 10 || !to.every((a) => ADDRESS.test(a))) return false;
-  return !hasControl(m.to) && !hasControl(m.subject) && m.subject.length <= 500 && m.body.length <= 100_000;
+/** Check a message and make the args to approve. It copies the bytes before its first await (W7). */
+async function prepare(m: OutgoingMessage): Promise<{ args: Args; files: Uint8Array[] } | undefined> {
+  if (!m || typeof m !== "object") return undefined;
+  const [to, cc, bcc] = [addresses(m.to), addresses(m.cc), addresses(m.bcc)];
+  if (!to?.length || !cc || !bcc || to.length + cc.length + bcc.length > 20 || ![...to, ...cc, ...bcc].every((a) => ADDRESS.test(a))) return undefined;
+  if (typeof m.subject !== "string" || hasControl(m.subject) || m.subject.length > 500 || typeof m.body !== "string" || m.body.length > 40_000) return undefined;
+  const list = m.attachments ?? [];
+  if (!Array.isArray(list) || list.length > 10) return undefined;
+  const files: Uint8Array[] = [];
+  for (const a of list) {
+    if (!a || typeof a.filename !== "string" || !FILENAME.test(a.filename) || typeof a.mimeType !== "string" || !MIME_TYPE.test(a.mimeType)) return undefined;
+    if (Object.prototype.toString.call(a.data) !== "[object Uint8Array]") return undefined;
+    files.push(a.data.slice());
+  }
+  if (files.reduce((n, f) => n + f.length, 0) > 3_000_000) return undefined;
+  const attachments = await Promise.all(list.map(async (a, i) => ({ filename: a.filename, mimeType: a.mimeType, size: files[i]?.length ?? 0, sha256: await hex(files[i] ?? new Uint8Array()) })));
+  return { args: { to, cc, bcc, subject: m.subject, body: m.body, attachments }, files };
 }
 
 /**
@@ -77,12 +124,14 @@ function encodedWords(text: string): string {
   return words.map((w) => `=?UTF-8?B?${b64(w)}?=`).join("\r\n ");
 }
 
-/** An RFC 5322 message with a UTF-8 text body. A non-ASCII subject is RFC 2047 encoded. */
-function mime(m: OutgoingMessage): string {
-  const plain = /^[\x20-\x7e]*$/.test(m.subject) && !m.subject.includes("=?");
-  const subject = plain ? m.subject : encodedWords(m.subject);
-  const body = (b64(m.body).match(/.{1,76}/g) ?? []).join("\r\n");
-  return [`To: ${m.to.split(",").map((a) => a.trim()).join(", ")}`, `Subject: ${subject}`, "MIME-Version: 1.0", 'Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: base64", "", body].join("\r\n");
+/** An RFC 5322 message, multipart/mixed with attachments. A non-ASCII subject is RFC 2047 encoded. Base64 never holds the `=_` of the boundary. */
+function mime(a: Args, files: Uint8Array[]): string {
+  const plain = /^[\x20-\x7e]*$/.test(a.subject) && !a.subject.includes("=?");
+  const head = [`To: ${a.to.join(", ")}`, ...(a.cc.length ? [`Cc: ${a.cc.join(", ")}`] : []), ...(a.bcc.length ? [`Bcc: ${a.bcc.join(", ")}`] : []), `Subject: ${plain ? a.subject : encodedWords(a.subject)}`, "MIME-Version: 1.0"];
+  const text = ['Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: base64", "", lines(b64(a.body))];
+  if (!files.length) return [...head, ...text].join("\r\n");
+  const parts = a.attachments.flatMap((f, i) => [`--${BOUNDARY}`, `Content-Type: ${f.mimeType}; name="${f.filename}"`, `Content-Disposition: attachment; filename="${f.filename}"`, "Content-Transfer-Encoding: base64", "", lines(b64bytes(files[i] ?? new Uint8Array()))]);
+  return [...head, `Content-Type: multipart/mixed; boundary="${BOUNDARY}"`, "", `--${BOUNDARY}`, ...text, ...parts, `--${BOUNDARY}--`, ""].join("\r\n");
 }
 
 const READ_SCOPES = [GOOGLE_SCOPES.gmailRead, "https://www.googleapis.com/auth/gmail.modify", "https://mail.google.com/"];
@@ -127,7 +176,7 @@ const summary = (m: MessageResource): MessageSummary => ({
 
 const clampMax = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? Math.min(Math.max(Math.trunc(value), 1), 50) : 10);
 
-export function gmail(link: Link, options: { baseUrl?: string; gate?: Gate } = {}) {
+export function gmail(link: Link, options: GmailOptions = {}) {
   const base = options.baseUrl ?? link.provider.endpoints?.gmailBase ?? GOOGLE_ENDPOINTS.gmailBase;
 
   async function hasAny(scopes: string[]) {
@@ -148,6 +197,26 @@ export function gmail(link: Link, options: { baseUrl?: string; gate?: Gate } = {
     return (await res.json()) as T;
   }
 
+
+  async function write(kind: "send" | "draft", { args, files }: { args: Args; files: Uint8Array[] }, token: string | undefined) {
+    const post = async (judged: Record<string, unknown>) => {
+      const approved = judged as unknown as Args;
+      const raw = mime(approved, files);
+      const encoded = b64(raw).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      const body = kind === "send" ? { raw: encoded } : { message: { raw: encoded } };
+      const res = await link.fetch(`${base}/users/me/${kind === "send" ? "messages/send" : "drafts"}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      if (!res.ok) throw new FoxlinkError("http-error", `Gmail answered HTTP ${res.status}.`, { status: res.status });
+      const id = String(((await res.json()) as { id?: unknown }).id ?? "");
+      const sha256 = await hex(utf8(raw));
+      const entry = { actor: "foxlink", kind: `gmail.${kind}`, data: { id, to: approved.to, cc: approved.cc, bcc: approved.bcc, sha256 } };
+      const logged = await Promise.resolve(options.trail?.append(entry)).then(() => ({}), () => ({ logged: false as const }));
+      return { status: kind === "send" ? "sent" : "drafted", id, sha256, ...logged };
+    };
+    const privateData = Boolean(await options.privateMode?.());
+    if (kind === "draft" && !privateData) return post(args as unknown as Record<string, unknown>);
+    const action = { tool: `foxlink.gmail.${kind}`, scope: "submit" as const, domain: new URL(base).hostname, args: { ...args, ...(privateData ? { privateData } : {}) } };
+    return gated(options.gate, action, token, post, true);
+  }
 
   return Object.freeze({
     /** Newest messages first, with their headers. One list request and one request for each message. */
@@ -178,21 +247,22 @@ export function gmail(link: Link, options: { baseUrl?: string; gate?: Gate } = {
     },
 
     /**
-     * Send a plain text message, after a foxgate decision with scope `submit`.
-     * The first call returns `ask`. Call again with the approval token.
+     * Send a message, after a human approved it through foxgate (scope `submit`).
+     * The first call asks for the `gmail.send` scope if needed, then returns `ask`.
+     * Call again with the approval token. One token sends one message.
      */
-    async sendMessage(message: OutgoingMessage, approval: { token?: string } = {}): Promise<{ status: "sent"; id: string } | Asked | Refused> {
-      if (!validMessage(message)) return { status: "refused", reason: "bad-input" };
-      if (!(await hasAny(SEND_SCOPES))) return { status: "refused", reason: "missing-scope" };
-      const args = { to: message.to, subject: message.subject, body: message.body };
-      const action = { tool: "foxlink.gmail.send", scope: FOXLINK_TOOLS["foxlink.gmail.send"], domain: new URL(base).hostname, args };
-      return gated(options.gate, action, approval.token, async (judged) => {
-        const raw = b64(mime(judged as unknown as OutgoingMessage)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-        const res = await link.fetch(`${base}/users/me/messages/send`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ raw }) });
-        if (!res.ok) throw new FoxlinkError("http-error", `Gmail answered HTTP ${res.status}.`, { status: res.status });
-        const sent = (await res.json()) as { id?: unknown };
-        return { status: "sent" as const, id: String(sent.id ?? "") };
-      });
+    async sendMessage(message: OutgoingMessage, approval: { token?: string } = {}): Promise<Written<"sent"> | Asked | Refused> {
+      if (options.draftOnly) return { status: "refused", reason: "draft-only" };
+      const prepared = await prepare(message);
+      if (!prepared) return { status: "refused", reason: "bad-input" };
+      return (await withScope(link, SEND_SCOPES, GOOGLE_SCOPES.gmailSend)) ?? (write("send", prepared, approval.token) as Promise<Written<"sent"> | Asked | Refused>);
+    },
+
+    /** Save a draft, with no approval. In private-data mode it asks foxgate first, as a send does. */
+    async createDraft(message: OutgoingMessage, approval: { token?: string } = {}): Promise<Written<"drafted"> | Asked | Refused> {
+      const prepared = await prepare(message);
+      if (!prepared) return { status: "refused", reason: "bad-input" };
+      return (await withScope(link, COMPOSE, GOOGLE_SCOPES.gmailCompose)) ?? (write("draft", prepared, approval.token) as Promise<Written<"drafted"> | Asked | Refused>);
     },
   });
 }
