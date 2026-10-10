@@ -60,6 +60,8 @@ export async function startFakeGoogle({ now = Date.now } = {}) {
   const events = [];
   const sent = [];
   const drafts = [];
+  const invites = [];
+  const writes = []; // one entry for each event insert or patch, with its sendUpdates
   const log = [];
   const issued = []; // every token, code, and secret the server gave out, for leak scans
   const counts = { token: 0, refresh: 0, revoke: 0, pixel: 0 };
@@ -237,16 +239,31 @@ export async function startFakeGoogle({ now = Date.now } = {}) {
     return json(res, 200, messageResource(m, url.searchParams.get("format") ?? "full", wanted));
   }
 
+  // Google sends invites only with sendUpdates=all or externalOnly. Each one goes to `invites`.
+  const invite = (url, event) => {
+    if (["all", "externalOnly"].includes(url.searchParams.get("sendUpdates") ?? "")) invites.push(...(event.attendees ?? []).map((a) => ({ to: a.email, event: event.id })));
+  };
+
   function calendar(req, res, url, body) {
-    if (req.method === "POST") {
+    const id = url.pathname.split("/events/")[1];
+    if (req.method === "POST" || req.method === "PATCH") {
       if (!bearer(req, res, CAL_WRITE)) return;
       const input = JSON.parse(body || "{}");
-      if (!input.start?.dateTime || !input.end?.dateTime) return apiError(res, 400, "Missing time.");
-      const event = { kind: "calendar#event", id: rand("ev").slice(0, 26), status: "confirmed", htmlLink: "https://calendar.google.com/event?eid=fake", ...input };
-      events.push(event);
+      const old = id ? events.find((e) => e.id === decodeURIComponent(id)) : undefined;
+      if (id && !old) return apiError(res, 404, "Not Found");
+      if (!id && (!input.start?.dateTime || !input.end?.dateTime)) return apiError(res, 400, "Missing time.");
+      const me = { email: "me@example.com", self: true };
+      const event = old ? Object.assign(old, input) : { kind: "calendar#event", id: rand("ev").slice(0, 26), status: "confirmed", htmlLink: "https://calendar.google.com/event?eid=fake", organizer: me, creator: me, ...input };
+      if (!old) events.push(event);
+      writes.push({ method: req.method, sendUpdates: url.searchParams.get("sendUpdates"), id: event.id });
+      invite(url, event);
       return json(res, 200, event);
     }
     if (!bearer(req, res, CAL_READ)) return;
+    if (id) {
+      const event = events.find((e) => e.id === decodeURIComponent(id));
+      return event ? json(res, 200, event) : apiError(res, 404, "Not Found");
+    }
     const min = Date.parse(url.searchParams.get("timeMin") ?? "") || -Infinity;
     const maxT = Date.parse(url.searchParams.get("timeMax") ?? "") || Infinity;
     const max = Math.min(Number(url.searchParams.get("maxResults") ?? 250) || 250, 2500);
@@ -263,7 +280,7 @@ export async function startFakeGoogle({ now = Date.now } = {}) {
     const auth = /^Bearer (\S+)$/.exec(req.headers.authorization ?? "")?.[1] ?? null;
     log.push({ host: sub, method: req.method, path: url.pathname, token: auth, origin: req.headers.origin ?? null });
     try {
-      const body = req.method === "POST" && !["/token", "/revoke"].includes(url.pathname) ? await readBody(req) : "";
+      const body = ["POST", "PATCH"].includes(req.method ?? "") && !["/token", "/revoke"].includes(url.pathname) ? await readBody(req) : "";
       if (url.pathname === "/pixel.gif") {
         counts.pixel += 1;
         return res.writeHead(200, { "content-type": "image/gif" }).end(Buffer.from("R0lGODlhAQABAAAAACw=", "base64"));
@@ -273,7 +290,7 @@ export async function startFakeGoogle({ now = Date.now } = {}) {
       if (sub === "oauth2" && req.method === "POST" && url.pathname === "/token") return await token(req, res);
       if (sub === "oauth2" && req.method === "POST" && url.pathname === "/revoke") return await revoke(req, res, url);
       if (sub === "gmail" && url.pathname.startsWith("/gmail/v1/users/me/")) return gmail(req, res, url, body);
-      if (sub === "www" && url.pathname === "/calendar/v3/calendars/primary/events") return calendar(req, res, url, body);
+      if (sub === "www" && url.pathname.startsWith("/calendar/v3/calendars/primary/events")) return calendar(req, res, url, body);
       apiError(res, 404, "Not found.");
     } catch (error) {
       apiError(res, 500, String(error));
@@ -300,6 +317,8 @@ export async function startFakeGoogle({ now = Date.now } = {}) {
     sent,
     drafts,
     events,
+    invites,
+    writes,
     /** @param {{ id: string, secret?: string, redirectUris: string[] }} client */
     addClient({ id, secret, redirectUris }) {
       clients.set(id, { id, secret, redirectUris });
