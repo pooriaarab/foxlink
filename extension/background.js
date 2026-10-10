@@ -31,7 +31,7 @@ function localEndpoints(port) {
 async function build(s) {
   const scopes = [GOOGLE_SCOPES.gmailRead, GOOGLE_SCOPES.calendarRead];
   const endpoints = globalThis.FOXLINK_E2E && s.testPort ? localEndpoints(s.testPort) : undefined;
-  const provider = googleProvider({ clientId: s.clientId, ...(s.clientSecret ? { clientSecret: s.clientSecret } : {}), scopes, allowedScopes: [...scopes, GOOGLE_SCOPES.gmailSend], endpoints, allowHttp: Boolean(endpoints) });
+  const provider = googleProvider({ clientId: s.clientId, ...(s.clientSecret ? { clientSecret: s.clientSecret } : {}), scopes, allowedScopes: [...scopes, GOOGLE_SCOPES.gmailSend, GOOGLE_SCOPES.calendarEvents], endpoints, allowHttp: Boolean(endpoints) });
   vaultReady ??= vault.status().then((state) => (state === "new" ? vault.initialize() : undefined));
   await vaultReady;
   const link = createLink({ provider, vault, store, identity: browser.identity, transport: "inject" });
@@ -46,6 +46,13 @@ async function setup() {
   const key = JSON.stringify(s);
   if (current?.key !== key) current = { key, ready: build(s) };
   return current.ready;
+}
+
+// An "ask" answer carries the args that foxgate holds, for the approval view.
+async function withArgs(result) {
+  if (result.status !== "ask") return result;
+  const request = (await host.pending()).find((r) => r.id === result.requestId);
+  return { ...result, args: request?.action.args ?? {} };
 }
 
 const handlers = {
@@ -64,12 +71,8 @@ const handlers = {
     const m = await (await setup()).mail.getMessage(id);
     return { subject: m.subject, text: m.text.slice(0, 600) };
   },
-  send: async ({ message, token }) => {
-    const result = await (await setup()).mail.sendMessage(message, { token });
-    if (result.status !== "ask") return result;
-    const request = (await host.pending()).find((r) => r.id === result.requestId);
-    return { ...result, args: request?.action.args ?? {} };
-  },
+  send: async ({ message, token }) => withArgs(await (await setup()).mail.sendMessage(message, { token })),
+  event: async ({ event, token }) => withArgs(await (await setup()).cal.createEvent(event, { token })),
   approve: async ({ requestId }) => ({ token: await host.approve(requestId) }),
   deny: async ({ requestId }) => {
     await host.reject(requestId);

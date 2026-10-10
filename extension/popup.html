@@ -36,9 +36,20 @@
       <label>Body <textarea id="body"></textarea></label>
       <label>Attachments <input id="files" type="file" multiple /></label>
       <button id="send">Send</button>
-      <div id="pending"></div>
-      <div class="row"><button id="approve" hidden>Approve</button><button id="deny" hidden>Deny</button></div>
     </details>
+    <details id="event-box">
+      <summary>Add an event (asks you first)</summary>
+      <label>Title <input id="summary" /></label>
+      <label>Start (this computer's clock) <input id="start" type="datetime-local" /></label>
+      <label>End (this computer's clock) <input id="end" type="datetime-local" /></label>
+      <label>Time zone (empty: this browser) <input id="time-zone" placeholder="Europe/Madrid" /></label>
+      <label>Attendees, with commas between them <input id="attendees" /></label>
+      <label>Location <input id="location" /></label>
+      <label class="row"><input id="invite" type="checkbox" /> Send invites to the attendees</label>
+      <button id="event">Add the event</button>
+    </details>
+    <div id="pending"></div>
+    <div class="row"><button id="approve" hidden>Approve</button><button id="deny" hidden>Deny</button></div>
     <p>Result: <output id="result"></output></p>
     <script src="popup.js"></script>
   </body>
