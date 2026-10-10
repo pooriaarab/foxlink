@@ -7,6 +7,7 @@ export const FOXLINK_TOOLS = Object.freeze({
   "foxlink.gmail.send": "submit",
   "foxlink.gmail.draft": "submit",
   "foxlink.calendar.create": "submit",
+  "foxlink.calendar.update": "submit",
 } as const);
 
 export type Refused = { status: "refused"; reason: string };

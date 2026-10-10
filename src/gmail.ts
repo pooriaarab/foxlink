@@ -72,7 +72,7 @@ type Args = { to: string[]; cc: string[]; bcc: string[]; subject: string; body: 
 
 const COMPOSE = [GOOGLE_SCOPES.gmailCompose, "https://www.googleapis.com/auth/gmail.modify", "https://mail.google.com/"];
 const SEND_SCOPES = [GOOGLE_SCOPES.gmailSend, ...COMPOSE];
-const ADDRESS = /^[^\s@<>,;:"()[\]\\]+@[^\s@<>,;:"()[\]\\]+\.[^\s@<>,;:"()[\]\\]+$/;
+export const ADDRESS = /^[^\s@<>,;:"()[\]\\]+@[^\s@<>,;:"()[\]\\]+\.[^\s@<>,;:"()[\]\\]+$/;
 const FILENAME = /^[\w .()+,-]{1,200}$/;
 const MIME_TYPE = /^[a-z0-9][a-z0-9.+-]*\/[a-z0-9][a-z0-9.+-]*$/i;
 const BOUNDARY = "=_foxlink_mixed";
