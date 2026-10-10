@@ -110,6 +110,27 @@ what is not tested against the real Google.
 | S6 | Bad input: no `to`, a bad address, an event that ends before it starts. | It refuses with `bad-input`, before the gate. | `send.test.ts` S6 |
 | S7 | A write scope is not granted. | It refuses with `missing-scope`, before the gate. | `send.test.ts` S7 |
 
+## Send and drafts (W)
+
+| # | Failure mode | Wanted behaviour | Test |
+|---|---|---|---|
+| W1 | A send runs before the user granted `gmail.send`. | foxlink asks for consent one time, for the granted scopes plus `gmail.send`. Then the send asks foxgate. | `mail-write.test.ts` W1, E12 |
+| W2 | The send scope is not in `allowedScopes`. | It refuses with `missing-scope`. No consent window opens. | `mail-write.test.ts` W2 |
+| W3 | The user denies the extra consent. | It refuses with `access-denied`. The read grant still works. | `mail-write.test.ts` W3 |
+| W4 | The host grant has `approval: "never"`, so foxgate allows a send with no human. | It refuses with `approval-required`. Nothing is sent. | `mail-write.test.ts` W4 |
+| W5 | The approval hides a recipient or an attachment. | The approval text has `to`, `cc`, and `bcc` as lists (also when empty), the subject, the full body, and the name, type, size, and SHA-256 of each attachment. | `mail-write.test.ts` W5 |
+| W6 | One byte of an attachment changes after the approval. | It refuses with `action-changed`. Nothing is sent. | `mail-write.test.ts` W6 |
+| W7 | The caller changes the attachment bytes while the send runs. | foxlink copies the bytes at the start. Gmail gets the approved bytes. | `mail-write.test.ts` W7 |
+| W8 | A CR or LF in `cc`, `bcc`, or a file name, or a bad MIME type. | It refuses with `bad-input`, before the gate. | `mail-write.test.ts` W8 |
+| W9 | The message is too big for the gate (64 KB) or for Gmail. | A body over 40,000 characters, more than 20 recipients, more than 10 attachments, or more than 3 MB of attachments gets `bad-input`. | `mail-write.test.ts` W9 |
+| W10 | The audit trail keeps the email text. | The foxtrail entry has the recipients, the Gmail ID, and the SHA-256 of the raw message. It has no subject, body, or attachment bytes. | `mail-write.test.ts` W10 |
+| W11 | The trail write fails after Gmail took the message. | The result is `sent` with `logged: false`. foxlink does not send again. | `mail-write.test.ts` W11 |
+| W12 | Draft-only mode sends an email. | `sendMessage` refuses with `draft-only` and asks for no send scope. `createDraft` saves a draft with no approval. | `mail-write.test.ts` W12 |
+| W13 | A send runs while the run is in private-data mode. | It needs an approval with `privateData: true` in the text. A token from outside private-data mode gets `action-changed`. A draft asks too. | `mail-write.test.ts` W13 |
+| E12 | In Firefox, the first send needs a scope that the user did not grant. | The send opens the consent window for `gmail.send`, then waits for approval. | `e2e/run.mjs` E12 |
+| E13 | The body changes after the human approved. | The popup shows `refused: action-changed`. Nothing is sent. | `e2e/run.mjs` E13 |
+| E14 | The agent sends a second time with the same token. | It refuses with `token-used`. The fake Gmail has one copy. | `e2e/run.mjs` E14 |
+
 ## Firefox (E)
 
 | # | Failure mode | Wanted behaviour | Test |
