@@ -41,7 +41,7 @@ describe("gated writes", () => {
     const asked = await mail.sendMessage(mail1);
     expect(asked.status).toBe("ask");
     const [request] = await host.pending();
-    expect(JSON.parse(request?.text ?? "{}").args).toEqual(mail1);
+    expect(JSON.parse(request?.text ?? "{}").args).toEqual({ ...mail1, to: ["bob@example.com"], cc: [], bcc: [], attachments: [] });
     expect(g.sent).toEqual([]);
     const token = await host.approve(asked.status === "ask" ? asked.requestId : "");
     const sent = await mail.sendMessage(mail1, { token });
@@ -121,7 +121,8 @@ describe("gated writes", () => {
   });
 
   it("S7: no write scope: refused before the gate", async () => {
-    const { mail, cal, host } = await gated({ scopes: [SCOPE.gmailRead, SCOPE.calRead] });
+    const { mail, cal, host, g } = await gated({ scopes: [SCOPE.gmailRead, SCOPE.calRead] });
+    g.behavior.grantOnly = [SCOPE.gmailRead, SCOPE.calRead];
     expect(await mail.sendMessage(mail1)).toEqual({ status: "refused", reason: "missing-scope" });
     expect(await cal.createEvent(event1)).toEqual({ status: "refused", reason: "missing-scope" });
     expect(await host.pending()).toEqual([]);

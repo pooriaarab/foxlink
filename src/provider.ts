@@ -87,6 +87,7 @@ export function loopbackRedirectUrl(extensionRedirectUrl: string): string {
 export const GOOGLE_SCOPES = Object.freeze({
   gmailRead: "https://www.googleapis.com/auth/gmail.readonly",
   gmailSend: "https://www.googleapis.com/auth/gmail.send",
+  gmailCompose: "https://www.googleapis.com/auth/gmail.compose",
   calendarRead: "https://www.googleapis.com/auth/calendar.readonly",
   calendarEvents: "https://www.googleapis.com/auth/calendar.events",
 });
