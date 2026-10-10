@@ -7,4 +7,7 @@ input:not([type="checkbox"]), textarea { display: block; width: 100%; box-sizing
 button { padding: 4px 8px; }
 pre, code { white-space: pre-wrap; word-break: break-all; font-size: 12px; background: #f0f0f4; }
 ul { padding-left: 18px; }
+#pending dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 8px; margin: 0; }
+#pending dt { font-weight: 600; text-transform: capitalize; }
+#pending dd { margin: 0; white-space: pre-wrap; word-break: break-word; background: #f0f0f4; }
 output { font-weight: 600; }
