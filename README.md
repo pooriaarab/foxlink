@@ -71,12 +71,14 @@ console.log(htmlToText('<p>Hi &amp; welcome</p><img src="https://t.example/p.gif
 
 | Who | What they build | How foxlink helps |
 |---|---|---|
-| A browser agent author (for example foxmate) | An agent that reads the user's inbox and calendar and drafts replies | The agent gets message text marked `untrusted`, and never a token. A send waits for the user to approve the exact `to`, `subject`, and `body`. |
+| A browser agent author (for example foxmate) | An agent that reads the user's inbox and calendar and answers email | The agent gets message text marked `untrusted`, and never a token. A send waits for the user to approve the exact recipients, subject, body, and attachments. One approval sends one message. |
+| An email assistant author | A helper that writes replies for the user to check and send from Gmail | `gmail(link, { draftOnly: true })` saves drafts with no approval and cannot send. |
+| An auditor of an agent | A record of what the agent sent, with no copy of the mail | Pass a foxtrail log as `trail`. Each send adds the recipients, the Gmail ID, and the SHA-256 of the raw message. |
 | An extension author | A "what is next today" popup or new tab page | `listEvents({ max: 3 })` with the read-only Calendar scope, and refresh on expiry with no code of your own. |
 | A privacy tool author | An inbox cleaner that runs on the user's device only | The mail goes from Google to the extension and nowhere else. `htmlToText` drops scripts and tracking pixels, so opening a message loads nothing. |
 | An author of another OAuth integration | A link to GitHub, Notion, or any provider that issues codes with PKCE | `defineProvider` takes the endpoints, scopes, and API hosts. `connect`, `fetch`, refresh, and `disconnect` work the same. |
 | An MCP server or agent framework author | An email or calendar tool for a model | `gmail` and `calendar` return small typed records. `toPromptText` fences each record so that its text cannot close the fence. |
-| A security reviewer | A check that an extension asks only for what it needs | The Google preset asks for read-only scopes. `connect` refuses scopes outside the config and scopes that the server adds. |
+| A security reviewer | A check that an extension asks only for what it needs | The Google preset asks for read scopes. It asks for a write scope only at the first write that needs it, and only when `allowedScopes` holds it. `connect` refuses scopes that the server adds. |
 
 ## How it works
 
@@ -126,8 +128,9 @@ sequenceDiagram
   participant G as foxgate
   participant U as Human
   participant API as Gmail API
-  P->>M: sendMessage({ to, subject, body })
-  M->>M: check input (no CR or LF) and the send scope
+  P->>M: sendMessage({ to, cc, bcc, subject, body, attachments })
+  M->>M: check input, copy and hash the attachments
+  M->>U: consent window for gmail.send (first send only)
   M->>G: check(foxlink.gmail.send, scope submit)
   G-->>M: ask, requestId
   M-->>P: { status: "ask", requestId }
@@ -137,11 +140,12 @@ sequenceDiagram
   M->>G: redeem(token, action)
   G-->>M: allow, the judged args
   M->>API: POST messages/send (foxvault adds the token)
-  M-->>P: { status: "sent", id }
+  M->>M: add to foxtrail: recipients, ID, SHA-256 (no text)
+  M-->>P: { status: "sent", id, sha256 }
 ```
 
-A changed message gets `action-changed`, and a used token gets
-`token-used`. Every failure mode has a test: see
+A changed message gets `action-changed`, also for one changed attachment
+byte. A used token gets `token-used`. Every failure mode has a test: see
 [docs/failure-modes.md](docs/failure-modes.md).
 
 ## API
@@ -156,12 +160,24 @@ have to hold the tokens in another process.
 |---|---|
 | `googleProvider({ clientId, clientSecret?, scopes?, allowedScopes?, endpoints?, allowHttp? })` | The Google preset. Default scopes: `gmail.readonly` and `calendar.readonly`. `allowedScopes` is the most that `connect` may ask for. It uses the loopback redirect and asks for offline access. |
 | `defineProvider(config)` | Any provider. `config` has `id`, `clientId`, `authorizeUrl`, `tokenUrl`, `revokeUrl?`, `scopes`, `allowedScopes?`, `apiHosts`, `authParams?`, `redirect?` (`"extension"` or `"loopback"`), `issuers?`, and `allowHttp?`. |
-| `GOOGLE_SCOPES` | `gmailRead`, `gmailSend`, `calendarRead`, and `calendarEvents`. |
+| `GOOGLE_SCOPES` | `gmailRead`, `gmailSend`, `gmailCompose`, `calendarRead`, and `calendarEvents`. |
 | `GOOGLE_ENDPOINTS` | The Google authorize, token, revoke, Gmail, and Calendar URLs. |
 | `loopbackRedirectUrl(url)` | `http://127.0.0.1/mozoauth2/<subdomain>` from the value of `identity.getRedirectURL()`. |
 
 `allowHttp` is for test servers only. Without it, every endpoint must use
 `https:`.
+
+#### Scopes
+
+| Scope | Used by | When foxlink asks for it |
+|---|---|---|
+| `gmail.readonly` | `listMessages`, `getMessage` | At `connect`, by default. |
+| `calendar.readonly` | `listEvents` | At `connect`, by default. |
+| `gmail.send` | `sendMessage` | At the first send, when `allowedScopes` holds it. |
+| `gmail.compose` | `createDraft` | At the first draft, when `allowedScopes` holds it. |
+| `calendar.events` | `createEvent` | Only when you pass it to `connect`. |
+
+A write scope request is a new `connect`, so the user sees Google consent again.
 
 ### `createLink(options)`
 
@@ -193,12 +209,15 @@ have to hold the tokens in another process.
 |---|---|
 | `gmail(link, { gate? }).listMessages({ query?, max?, pageToken? })` | The newest messages with From, To, Subject, Date, and the snippet. `max` is 1 to 50 (default 10). Returns `{ messages, nextPageToken? }`. |
 | `gmail(link).getMessage(id)` | One message with `text`: the `text/plain` part, or the HTML part as plain text. |
-| `gmail(link, { gate }).sendMessage({ to, subject, body }, { token? })` | A plain text email, after a foxgate approval. A subject with non-ASCII characters or `=?` goes out as RFC 2047 encoded words, so the recipient sees the approved text. Returns `{ status: "sent", id }`, `{ status: "ask", requestId }`, or `{ status: "refused", reason }`. |
+| `gmail(link, { gate, trail?, draftOnly?, privateMode? })` | `trail` is a foxtrail `Log`. A trail write that fails gives `logged: false`. `privateMode` returns true while the run is in private-data mode: then each approval holds `privateData: true`. |
+| `gmail(link, { gate }).sendMessage({ to, cc?, bcc?, subject, body, attachments? }, { token? })` | A plain text email, after a foxgate approval. `attachments` is a list of `{ filename, mimeType, data }`, with `data` a `Uint8Array`. A subject with non-ASCII characters or `=?` goes out as RFC 2047 encoded words, so the recipient sees the approved text. Returns `{ status: "sent", id, sha256 }`, `{ status: "ask", requestId }`, or `{ status: "refused", reason }`. |
+| `gmail(link).createDraft(message, { token? })` | Saves the same message as a Gmail draft, with no approval. In private-data mode it asks foxgate first. Returns `{ status: "drafted", id, sha256 }`. |
 | `calendar(link).listEvents({ timeMin?, timeMax?, max? })` | The next events from `timeMin` (default: now), by start time. Returns `{ events }`. |
 | `calendar(link, { gate }).createEvent({ summary, start, end, description?, location? }, { token? })` | Adds an event, after a foxgate approval. Returns `created`, `ask`, or `refused`. |
-| `FOXLINK_TOOLS` | `{ "foxlink.gmail.send": "submit", "foxlink.calendar.create": "submit" }`. Pass it to `createFoxgate({ tools })`, and add a `submit` grant for the API hosts. |
+| `FOXLINK_TOOLS` | `foxlink.gmail.send`, `foxlink.gmail.draft`, and `foxlink.calendar.create`, all with scope `submit`. Pass it to `createFoxgate({ tools })`, and add a `submit` grant for the API hosts. |
 
-Refused reasons: `bad-input`, `missing-scope`, `no-gate`, and every foxgate
+Refused reasons: `bad-input`, `missing-scope`, `no-gate`, `approval-required`,
+`draft-only`, a `connect` error code such as `access-denied`, and every foxgate
 deny reason, for example `action-changed`, `token-used`, or `rejected`.
 
 ### Text
@@ -227,8 +246,9 @@ for example `locked`, come through as foxvault `VaultError`.
 
 `extension/` is the foxlink add-on for Firefox 153+. Type your OAuth client
 ID in Settings. Then use "Connect Google", "Show my next 3 events", "Show 5
-latest email subjects", and "Read the latest email". With "Ask for the Gmail send
-scope" on, you can send an email after you approve the exact message.
+latest email subjects", and "Read the latest email". The first send asks
+Google for the send scope. Then the popup shows To, Cc, Bcc, the subject,
+the body, and each attachment, and it sends only after you approve.
 
 ```bash
 pnpm install
@@ -252,7 +272,8 @@ endpoints and REST shapes. These are the steps to try the real Google:
 3. Open **Google Auth Platform** (the OAuth consent screen). Set the
    audience to **External**. Add your own Google account as a test user.
 4. In **Data Access**, add the scopes `gmail.readonly` and
-   `calendar.readonly`. Add `gmail.send` only if you want to send.
+   `calendar.readonly`. Add `gmail.send` only if you want to send, and
+   `gmail.compose` only if you want drafts.
 5. In **Clients**, create an OAuth client with the application type
    **Desktop app**. Google accepts loopback redirect URIs for this type.
    Copy the client ID and the client secret.
@@ -305,8 +326,12 @@ is a restricted scope. A public app with it needs a Google review.
   them in the vault.
 - `sendMessage` takes bare addresses only, for example `ana@example.com`,
   not `Ana <ana@example.com>`.
-- `sendMessage` sends plain text only. It has no HTML, no attachments, no
-  CC or BCC, and no reply threading.
+- `sendMessage` sends a plain text body, with no HTML and no reply
+  threading. The most it takes: 20 recipients, a body of 40,000 characters
+  (the approval must fit in 64 KB), and 10 attachments of 3 MB together.
+- `gmail.compose` lets the token send too. foxlink sends only after an
+  approval, but other code with the token can send. The host must pass
+  `privateMode`: foxlink does not know the run mode by itself.
 - `listMessages` gets at most 50 messages for each call. It does not page
   through the whole mailbox by itself.
 - `listEvents` reads one calendar (`primary` by default).
@@ -326,17 +351,20 @@ flowchart LR
   foxvault[foxvault] --> foxlink
   foxgate[foxgate] --> foxlink
   foxgate --> foxvault
+  foxtrail[foxtrail] -. optional audit log .-> foxlink
   foxlink --> foxmate[foxmate]
   foxlink -. untrusted text .-> foxshield[foxshield]
   click foxkit "https://github.com/pooriaarab/foxkit"
   click foxvault "https://github.com/pooriaarab/foxvault"
   click foxgate "https://github.com/pooriaarab/foxgate"
+  click foxtrail "https://github.com/pooriaarab/foxtrail"
   click foxlink "https://github.com/pooriaarab/foxlink"
   click foxmate "https://github.com/pooriaarab/foxmate"
   click foxshield "https://github.com/pooriaarab/foxshield"
 ```
 
 foxlink depends on foxvault for the tokens and on foxgate for approvals.
+It can write each send to a foxtrail log, but it does not install foxtrail.
 foxshield does not depend on foxlink. An app can pass foxlink text to
 foxshield before a model reads it.
 

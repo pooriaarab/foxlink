@@ -12,7 +12,6 @@
       <label>OAuth client ID <input id="client-id" autocomplete="off" /></label>
       <label>Client secret (if Google gave one) <input id="client-secret" type="password" autocomplete="off" /></label>
       <label id="local-server" hidden>Local server port (empty: Google) <input id="test-port" inputmode="numeric" /></label>
-      <label class="row"><input id="allow-send" type="checkbox" /> Ask for the Gmail send scope</label>
       <p>Redirect URI to register: <code id="redirect"></code></p>
       <button id="save">Save</button>
     </details>
@@ -31,10 +30,13 @@
     <details id="send-box">
       <summary>Send an email (asks you first)</summary>
       <label>To <input id="to" /></label>
+      <label>Cc <input id="cc" /></label>
+      <label>Bcc <input id="bcc" /></label>
       <label>Subject <input id="subject" /></label>
       <label>Body <textarea id="body"></textarea></label>
+      <label>Attachments <input id="files" type="file" multiple /></label>
       <button id="send">Send</button>
-      <pre id="pending"></pre>
+      <div id="pending"></div>
       <div class="row"><button id="approve" hidden>Approve</button><button id="deny" hidden>Deny</button></div>
     </details>
     <p>Result: <output id="result"></output></p>
