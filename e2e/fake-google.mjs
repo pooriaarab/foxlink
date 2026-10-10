@@ -17,7 +17,8 @@ const rand = (prefix) => prefix + randomBytes(24).toString("hex");
 const b64url = (buf) => Buffer.from(buf).toString("base64url");
 const sha256 = (text) => createHash("sha256").update(text).digest("base64url");
 const GMAIL_READ = ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.modify", "https://mail.google.com/"];
-const GMAIL_SEND = ["https://www.googleapis.com/auth/gmail.send", "https://www.googleapis.com/auth/gmail.modify", "https://mail.google.com/"];
+const GMAIL_DRAFT = ["https://www.googleapis.com/auth/gmail.compose", "https://www.googleapis.com/auth/gmail.modify", "https://mail.google.com/"];
+const GMAIL_SEND = ["https://www.googleapis.com/auth/gmail.send", ...GMAIL_DRAFT];
 const CAL_READ = ["https://www.googleapis.com/auth/calendar.readonly", "https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar"];
 const CAL_WRITE = ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar"];
 
@@ -58,6 +59,7 @@ export async function startFakeGoogle({ now = Date.now } = {}) {
   const messages = [];
   const events = [];
   const sent = [];
+  const drafts = [];
   const log = [];
   const issued = []; // every token, code, and secret the server gave out, for leak scans
   const counts = { token: 0, refresh: 0, revoke: 0, pixel: 0 };
@@ -201,6 +203,14 @@ export async function startFakeGoogle({ now = Date.now } = {}) {
   }
 
   function gmail(req, res, url, body) {
+    if (url.pathname === "/gmail/v1/users/me/drafts" && req.method === "POST") {
+      if (!bearer(req, res, GMAIL_DRAFT)) return;
+      const raw = JSON.parse(body || "{}").message?.raw;
+      if (typeof raw !== "string") return apiError(res, 400, "Missing draft message");
+      const id = rand("r-").slice(0, 20);
+      drafts.push({ id, raw: Buffer.from(raw, "base64url").toString("utf8") });
+      return json(res, 200, { id, message: { id: rand("m-").slice(0, 18), labelIds: ["DRAFT"] } });
+    }
     const path = url.pathname.replace("/gmail/v1/users/me/messages", "");
     if (req.method === "POST" && path === "/send") {
       if (!bearer(req, res, GMAIL_SEND)) return;
@@ -262,7 +272,7 @@ export async function startFakeGoogle({ now = Date.now } = {}) {
       if (sub === "accounts" && url.pathname === "/o/oauth2/v2/approve") return approve(url.searchParams.get("id"), res);
       if (sub === "oauth2" && req.method === "POST" && url.pathname === "/token") return await token(req, res);
       if (sub === "oauth2" && req.method === "POST" && url.pathname === "/revoke") return await revoke(req, res, url);
-      if (sub === "gmail" && url.pathname.startsWith("/gmail/v1/users/me/messages")) return gmail(req, res, url, body);
+      if (sub === "gmail" && url.pathname.startsWith("/gmail/v1/users/me/")) return gmail(req, res, url, body);
       if (sub === "www" && url.pathname === "/calendar/v3/calendars/primary/events") return calendar(req, res, url, body);
       apiError(res, 404, "Not found.");
     } catch (error) {
@@ -288,6 +298,7 @@ export async function startFakeGoogle({ now = Date.now } = {}) {
     issued,
     counts,
     sent,
+    drafts,
     events,
     /** @param {{ id: string, secret?: string, redirectUris: string[] }} client */
     addClient({ id, secret, redirectUris }) {

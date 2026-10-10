@@ -14,7 +14,7 @@ attachHeaderInjection(vault, browser);
 
 async function settings() {
   const { settings: saved } = await browser.storage.local.get("settings");
-  return { clientId: "", clientSecret: "", testPort: "", allowSend: false, ...saved };
+  return { clientId: "", clientSecret: "", testPort: "", ...saved };
 }
 
 let vaultReady;
@@ -29,10 +29,9 @@ function localEndpoints(port) {
 }
 
 async function build(s) {
-  const read = [GOOGLE_SCOPES.gmailRead, GOOGLE_SCOPES.calendarRead];
-  const scopes = s.allowSend ? [...read, GOOGLE_SCOPES.gmailSend] : read;
+  const scopes = [GOOGLE_SCOPES.gmailRead, GOOGLE_SCOPES.calendarRead];
   const endpoints = globalThis.FOXLINK_E2E && s.testPort ? localEndpoints(s.testPort) : undefined;
-  const provider = googleProvider({ clientId: s.clientId, ...(s.clientSecret ? { clientSecret: s.clientSecret } : {}), scopes, endpoints, allowHttp: Boolean(endpoints) });
+  const provider = googleProvider({ clientId: s.clientId, ...(s.clientSecret ? { clientSecret: s.clientSecret } : {}), scopes, allowedScopes: [...scopes, GOOGLE_SCOPES.gmailSend], endpoints, allowHttp: Boolean(endpoints) });
   vaultReady ??= vault.status().then((state) => (state === "new" ? vault.initialize() : undefined));
   await vaultReady;
   const link = createLink({ provider, vault, store, identity: browser.identity, transport: "inject" });
@@ -65,16 +64,13 @@ const handlers = {
     const m = await (await setup()).mail.getMessage(id);
     return { subject: m.subject, text: m.text.slice(0, 600) };
   },
-  send: async ({ message }) => {
-    const result = await (await setup()).mail.sendMessage(message);
+  send: async ({ message, token }) => {
+    const result = await (await setup()).mail.sendMessage(message, { token });
     if (result.status !== "ask") return result;
     const request = (await host.pending()).find((r) => r.id === result.requestId);
-    return { ...result, text: request?.text ?? "" };
+    return { ...result, args: request?.action.args ?? {} };
   },
-  approve: async ({ requestId, message }) => {
-    const token = await host.approve(requestId);
-    return (await setup()).mail.sendMessage(message, { token });
-  },
+  approve: async ({ requestId }) => ({ token: await host.approve(requestId) }),
   deny: async ({ requestId }) => {
     await host.reject(requestId);
     return { status: "rejected" };

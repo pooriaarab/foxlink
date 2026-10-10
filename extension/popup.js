@@ -15,7 +15,20 @@ function show(id, text) {
 }
 
 const statusText = (s) => (s.connected ? `Connected (${s.scopes.map((x) => x.split("/").pop()).join(", ")})` : "Not connected");
-const message = () => ({ to: $("to").value, subject: $("subject").value, body: $("body").value });
+const message = async () => ({
+  ...Object.fromEntries(["to", "cc", "bcc", "subject", "body"].map((id) => [id, $(id).value])),
+  attachments: await Promise.all([...$("files").files].map(async (f) => ({ filename: f.name, mimeType: f.type || "application/octet-stream", data: new Uint8Array(await f.arrayBuffer()) }))),
+});
+
+const shown = (v) => (Array.isArray(v) ? v.map((x) => (typeof x === "object" ? `${x.filename} (${x.mimeType}, ${x.size} bytes, SHA-256 ${x.sha256})` : x)).join(", ") || "(none)" : String(v));
+const ORDER = ["to", "cc", "bcc", "subject", "body", "attachments", "privateData"];
+const rank = (key) => (ORDER.includes(key) ? ORDER.indexOf(key) : ORDER.length);
+function approval(args) {
+  const rows = document.createElement("dl");
+  for (const [k, v] of Object.entries(args).toSorted(([a], [b]) => rank(a) - rank(b))) rows.append(Object.assign(document.createElement("dt"), { textContent: k }), Object.assign(document.createElement("dd"), { textContent: shown(v) }));
+  $("pending").replaceChildren(Object.assign(document.createElement("p"), { textContent: "Approve this exact action?" }), rows);
+}
+const outcome = (r) => (r.status === "sent" ? "Sent" : `${r.status}${r.reason ? `: ${r.reason}` : ""}`);
 
 function list(items) {
   $("list").replaceChildren(...items.map((text) => Object.assign(document.createElement("li"), { textContent: text })));
@@ -24,7 +37,7 @@ function list(items) {
 
 const actions = {
   save: async () => {
-    const value = { clientId: $("client-id").value.trim(), clientSecret: $("client-secret").value, testPort: $("test-port").value.trim(), allowSend: $("allow-send").checked };
+    const value = { clientId: $("client-id").value.trim(), clientSecret: $("client-secret").value, testPort: $("test-port").value.trim() };
     await call("saveSettings", { value });
     show("result", "Saved");
   },
@@ -43,18 +56,18 @@ const actions = {
     show("result", "Read");
   },
   send: async () => {
-    const r = await call("send", { message: message() });
+    const r = await call("send", { message: await message() });
     if (r.status === "ask") {
-      waiting = { requestId: r.requestId, message: message() };
-      $("pending").textContent = `Approve this exact action?\n${r.text}`;
+      waiting = { requestId: r.requestId };
+      approval(r.args);
       $("approve").hidden = $("deny").hidden = false;
     }
-    show("result", r.status === "ask" ? "Waiting for approval" : `${r.status}${r.reason ? `: ${r.reason}` : ""}`);
+    show("result", r.status === "ask" ? "Waiting for approval" : outcome(r));
   },
   approve: async () => {
-    const r = await call("approve", waiting);
+    const { token } = await call("approve", waiting);
     $("approve").hidden = $("deny").hidden = true;
-    show("result", r.status === "sent" ? "Sent" : `${r.status}${r.reason ? `: ${r.reason}` : ""}`);
+    show("result", outcome(await call("send", { message: await message(), token })));
   },
   deny: async () => {
     await call("deny", waiting);
@@ -74,7 +87,6 @@ call("getSettings").then((s) => {
   $("client-id").value = s.clientId;
   $("client-secret").value = s.clientSecret;
   $("test-port").value = s.testPort;
-  $("allow-send").checked = s.allowSend;
   if (!s.clientId) $("settings-box").open = true;
 });
 call("redirect").then((uri) => ($("redirect").textContent = uri));
