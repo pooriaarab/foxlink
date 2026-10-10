@@ -73,6 +73,7 @@ console.log(htmlToText('<p>Hi &amp; welcome</p><img src="https://t.example/p.gif
 |---|---|---|
 | A browser agent author (for example foxmate) | An agent that reads the user's inbox and calendar and answers email | The agent gets message text marked `untrusted`, and never a token. A send waits for the user to approve the exact recipients, subject, body, and attachments. One approval sends one message. |
 | An email assistant author | A helper that writes replies for the user to check and send from Gmail | `gmail(link, { draftOnly: true })` saves drafts with no approval and cannot send. |
+| A scheduling assistant author | An agent that puts meetings on the user's calendar | `createEvent` shows the time zone and attendees for approval, and sends no invites unless the approval says `sendUpdates: "all"`. `patchEvent` moves only events that the user organizes. |
 | An auditor of an agent | A record of what the agent sent, with no copy of the mail | Pass a foxtrail log as `trail`. Each send adds the recipients, the Gmail ID, and the SHA-256 of the raw message. |
 | An extension author | A "what is next today" popup or new tab page | `listEvents({ max: 3 })` with the read-only Calendar scope, and refresh on expiry with no code of your own. |
 | A privacy tool author | An inbox cleaner that runs on the user's device only | The mail goes from Google to the extension and nowhere else. `htmlToText` drops scripts and tracking pixels, so opening a message loads nothing. |
@@ -175,7 +176,7 @@ have to hold the tokens in another process.
 | `calendar.readonly` | `listEvents` | At `connect`, by default. |
 | `gmail.send` | `sendMessage` | At the first send, when `allowedScopes` holds it. |
 | `gmail.compose` | `createDraft` | At the first draft, when `allowedScopes` holds it. |
-| `calendar.events` | `createEvent` | Only when you pass it to `connect`. |
+| `calendar.events` | `createEvent`, `patchEvent` | At the first event write, when `allowedScopes` holds it. |
 
 A write scope request is a new `connect`, so the user sees Google consent again.
 
@@ -213,11 +214,12 @@ A write scope request is a new `connect`, so the user sees Google consent again.
 | `gmail(link, { gate }).sendMessage({ to, cc?, bcc?, subject, body, attachments? }, { token? })` | A plain text email, after a foxgate approval. `attachments` is a list of `{ filename, mimeType, data }`, with `data` a `Uint8Array`. A subject with non-ASCII characters or `=?` goes out as RFC 2047 encoded words, so the recipient sees the approved text. Returns `{ status: "sent", id, sha256 }`, `{ status: "ask", requestId }`, or `{ status: "refused", reason }`. |
 | `gmail(link).createDraft(message, { token? })` | Saves the same message as a Gmail draft, with no approval. In private-data mode it asks foxgate first. Returns `{ status: "drafted", id, sha256 }`. |
 | `calendar(link).listEvents({ timeMin?, timeMax?, max? })` | The next events from `timeMin` (default: now), by start time. Returns `{ events }`. |
-| `calendar(link, { gate }).createEvent({ summary, start, end, description?, location? }, { token? })` | Adds an event, after a foxgate approval. Returns `created`, `ask`, or `refused`. |
-| `FOXLINK_TOOLS` | `foxlink.gmail.send`, `foxlink.gmail.draft`, and `foxlink.calendar.create`, all with scope `submit`. Pass it to `createFoxgate({ tools })`, and add a `submit` grant for the API hosts. |
+| `calendar(link, { gate }).createEvent({ summary, start, end, timeZone?, attendees?, sendUpdates?, description?, location? }, { token? })` | Adds an event, after a foxgate approval. `timeZone` defaults to the browser time zone, and `sendUpdates` to `none`, so nobody gets an invite. The approval shows every field with its default. Returns `created`, `ask`, or `refused`. |
+| `calendar(link, { gate }).patchEvent(id, changes, { token? })` | Changes the given fields of an event that the user organizes, after an approval. `start`, `end`, and `timeZone` go together. The approval also holds the current title, start, and end. Returns `updated`, `ask`, or `refused`. |
+| `FOXLINK_TOOLS` | `foxlink.gmail.send`, `foxlink.gmail.draft`, `foxlink.calendar.create`, and `foxlink.calendar.update`, all with scope `submit`. Pass it to `createFoxgate({ tools })`, and add a `submit` grant for the API hosts. |
 
 Refused reasons: `bad-input`, `missing-scope`, `no-gate`, `approval-required`,
-`draft-only`, a `connect` error code such as `access-denied`, and every foxgate
+`draft-only`, `not-own-event`, a `connect` error code such as `access-denied`, and every foxgate
 deny reason, for example `action-changed`, `token-used`, or `rejected`.
 
 ### Text
@@ -248,7 +250,8 @@ for example `locked`, come through as foxvault `VaultError`.
 ID in Settings. Then use "Connect Google", "Show my next 3 events", "Show 5
 latest email subjects", and "Read the latest email". The first send asks
 Google for the send scope. Then the popup shows To, Cc, Bcc, the subject,
-the body, and each attachment, and it sends only after you approve.
+the body, and each attachment, and it sends only after you approve. "Add an
+event" works the same way, and sends invites only when you tick the box.
 
 ```bash
 pnpm install
@@ -273,7 +276,8 @@ endpoints and REST shapes. These are the steps to try the real Google:
    audience to **External**. Add your own Google account as a test user.
 4. In **Data Access**, add the scopes `gmail.readonly` and
    `calendar.readonly`. Add `gmail.send` only if you want to send, and
-   `gmail.compose` only if you want drafts.
+   `gmail.compose` only if you want drafts, and `calendar.events` only if
+   you want to add events.
 5. In **Clients**, create an OAuth client with the application type
    **Desktop app**. Google accepts loopback redirect URIs for this type.
    Copy the client ID and the client secret.
@@ -334,7 +338,9 @@ is a restricted scope. A public app with it needs a Google review.
   `privateMode`: foxlink does not know the run mode by itself.
 - `listMessages` gets at most 50 messages for each call. It does not page
   through the whole mailbox by itself.
-- `listEvents` reads one calendar (`primary` by default).
+- `listEvents`, `createEvent`, and `patchEvent` use one calendar (`primary`
+  by default). Events have no recurrence, reminders, or meeting links.
+  foxlink cannot delete or cancel an event.
 - One link object for each provider, in one background page. Two link
   objects on the same store do not share a refresh, so they can send two
   refresh requests at the same time.

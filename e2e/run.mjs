@@ -1,6 +1,6 @@
 // The E2E test: install the demo extension (dist-ext/) in a real Firefox,
 // point it at the fake Google in e2e/fake-google.mjs, drive the popup, and
-// write artifacts/e2e-<date>.json. It checks E1-E9 and E12-E14 in docs/failure-modes.md.
+// write artifacts/e2e-<date>.json. It checks E1-E9 and E12-E15 in docs/failure-modes.md.
 // Usage: pnpm e2e [--headed]. Env: FIREFOX (the Firefox binary).
 //
 // identity.launchWebAuthFlow runs for real: it opens the fake consent page in
@@ -111,6 +111,17 @@ try {
   check("E14: the same token sends one time, then token-used", ["sent", "token-used"], replay);
   check("E14: the fake Gmail has one copy", 1, g.sent.filter((m) => m.raw.includes("Subject: Replay")).length);
 
+  await popup.evaluate(() => {
+    for (const [id, value] of [["summary", "Design review"], ["start", "2026-10-20T09:00"], ["end", "2026-10-20T10:00"], ["time-zone", "Europe/Madrid"], ["attendees", "ana@example.com, bo@example.com"], ["location", "Room 4"]]) document.getElementById(id).value = value;
+  });
+  check("E15: the event asks first", "Waiting for approval", await press(popup, "#event"));
+  check("E15: the event ran one more consent and code exchange", 3, g.counts.token - g.counts.refresh);
+  const eventApproval = await popup.evaluate(() => document.getElementById("pending").textContent);
+  record.eventApprovalText = eventApproval;
+  check("E15: the approval shows the time zone, attendees, no invites, and the place", true, ["Design review", "timeZoneEurope/Madrid", "attendeesana@example.com, bo@example.com", "sendUpdatesnone", "locationRoom 4"].every((t) => eventApproval.includes(t)));
+  check("E15: approve adds it", "Created", await press(popup, "#approve"));
+  check("E15: one insert with sendUpdates=none, and no invites", [[{ method: "POST", sendUpdates: "none" }], 0], [g.writes.map((w) => ({ method: w.method, sendUpdates: w.sendUpdates })), g.invites.length]);
+
   const page = await fox.open(`${site.url}/index.html`);
   await page.evaluate((url) => fetch(url).catch(() => null), `${g.endpoints.gmailBase}/users/me/messages`);
   await new Promise((done) => setTimeout(done, 500));
@@ -128,7 +139,7 @@ try {
   await site.close();
   await g.close();
 }
-record.passed = !record.error && record.checks.length === 29 && record.checks.every((c) => c.ok);
+record.passed = !record.error && record.checks.length === 34 && record.checks.every((c) => c.ok);
 const path = writeArtifact("artifacts", "e2e", record);
 for (const c of record.checks) console.log(`${c.ok ? "ok " : "BAD"} ${c.name}: ${JSON.stringify(c.actual)}`);
 console.log(`${record.passed ? "PASS" : "FAIL"} ${record.checks.length} checks${record.error ? `: ${record.error}` : ""} | ${path}`);
