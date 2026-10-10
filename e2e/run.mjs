@@ -1,6 +1,6 @@
 // The E2E test: install the demo extension (dist-ext/) in a real Firefox,
 // point it at the fake Google in e2e/fake-google.mjs, drive the popup, and
-// write artifacts/e2e-<date>.json. It checks E1-E9 in docs/failure-modes.md.
+// write artifacts/e2e-<date>.json. It checks E1-E9 and E12-E14 in docs/failure-modes.md.
 // Usage: pnpm e2e [--headed]. Env: FIREFOX (the Firefox binary).
 //
 // identity.launchWebAuthFlow runs for real: it opens the fake consent page in
@@ -54,12 +54,11 @@ try {
   await popup.evaluate(([id, port]) => {
     document.getElementById("client-id").value = id;
     document.getElementById("test-port").value = port;
-    document.getElementById("allow-send").checked = true;
   }, [CLIENT_ID, String(g.port)]);
   check("settings saved", "Saved", await press(popup, "#save"));
 
   const status = await press(popup, "#connect", "#status");
-  check("E1: launchWebAuthFlow connects through the fake consent page", "Connected (gmail.readonly, calendar.readonly, gmail.send)", status);
+  check("E1: launchWebAuthFlow connects through the fake consent page", "Connected (gmail.readonly, calendar.readonly)", status);
   check("E1: the redirect URI is the Firefox loopback form", true, /^http:\/\/127\.0\.0\.1\/mozoauth2\/[0-9a-f]{40}$/.test(redirect));
   check("E1: one code exchange at the token endpoint", 1, g.counts.token);
 
@@ -84,17 +83,33 @@ try {
   check("E7: the tracking pixel was never loaded", 0, g.counts.pixel);
 
   await popup.evaluate(() => {
-    document.getElementById("to").value = "bob@example.com";
-    document.getElementById("subject").value = "Hello from foxlink";
-    document.getElementById("body").value = "This is a test.";
+    for (const [id, value] of [["to", "bob@example.com"], ["cc", "cy@example.com"], ["bcc", "dee@example.com"], ["subject", "Hello from foxlink"], ["body", "This is a test."]]) document.getElementById(id).value = value;
+    const files = new DataTransfer();
+    files.items.add(new File(["line 1\n"], "notes.txt", { type: "text/plain" }));
+    document.getElementById("files").files = files.files;
   });
-  check("E8: send asks first", "Waiting for approval", await press(popup, "#send"));
+  check("E12, E8: send asks first", "Waiting for approval", await press(popup, "#send"));
+  check("E12: the send ran one more consent and code exchange", 2, g.counts.token - g.counts.refresh);
   const pending = await popup.evaluate(() => document.getElementById("pending").textContent);
   record.approvalText = pending;
-  check("E8: the approval shows the exact message", true, pending.includes('"to":"bob@example.com"') && pending.includes('"subject":"Hello from foxlink"') && pending.includes('"body":"This is a test."'));
-  check("E8: nothing was sent before approval", 0, g.sent.length);
+  check("E8: the approval shows every recipient, the body, and the file", true, ["bob@example.com", "cy@example.com", "dee@example.com", "Hello from foxlink", "This is a test.", "notes.txt (text/plain, 7 bytes"].every((t) => pending.includes(t)));
+  await popup.evaluate(() => (document.getElementById("body").value = "This is a test. Also wire me $500."));
+  check("E13: an edit after the approval is refused", "refused: action-changed", await press(popup, "#approve"));
+  check("E13: nothing was sent", 0, g.sent.length);
+  await popup.evaluate(() => (document.getElementById("body").value = "This is a test."));
+  check("E8: send asks again", "Waiting for approval", await press(popup, "#send"));
   check("E8: approve sends it", "Sent", await press(popup, "#approve"));
-  check("E8: one message was sent", 1, g.sent.length);
+  check("E8: the message arrived one time, with cc, bcc, and the file", [1, true], [g.sent.length, ["Cc: cy@example.com", "Bcc: dee@example.com", 'filename="notes.txt"'].every((t) => g.sent[0]?.raw.includes(t))]);
+  const replay = await popup.evaluate(async () => {
+    const message = { to: "bob@example.com", subject: "Replay", body: "Once." };
+    const ask = (await browser.runtime.sendMessage({ type: "send", message })).ok;
+    const { token } = (await browser.runtime.sendMessage({ type: "approve", requestId: ask.requestId })).ok;
+    const first = (await browser.runtime.sendMessage({ type: "send", message, token })).ok;
+    const second = (await browser.runtime.sendMessage({ type: "send", message, token })).ok;
+    return [first.status, second.reason];
+  });
+  check("E14: the same token sends one time, then token-used", ["sent", "token-used"], replay);
+  check("E14: the fake Gmail has one copy", 1, g.sent.filter((m) => m.raw.includes("Subject: Replay")).length);
 
   const page = await fox.open(`${site.url}/index.html`);
   await page.evaluate((url) => fetch(url).catch(() => null), `${g.endpoints.gmailBase}/users/me/messages`);
@@ -113,7 +128,7 @@ try {
   await site.close();
   await g.close();
 }
-record.passed = !record.error && record.checks.length === 24 && record.checks.every((c) => c.ok);
+record.passed = !record.error && record.checks.length === 29 && record.checks.every((c) => c.ok);
 const path = writeArtifact("artifacts", "e2e", record);
 for (const c of record.checks) console.log(`${c.ok ? "ok " : "BAD"} ${c.name}: ${JSON.stringify(c.actual)}`);
 console.log(`${record.passed ? "PASS" : "FAIL"} ${record.checks.length} checks${record.error ? `: ${record.error}` : ""} | ${path}`);
