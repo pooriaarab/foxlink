@@ -131,6 +131,21 @@ what is not tested against the real Google.
 | E13 | The body changes after the human approved. | The popup shows `refused: action-changed`. Nothing is sent. | `e2e/run.mjs` E13 |
 | E14 | The agent sends a second time with the same token. | It refuses with `token-used`. The fake Gmail has one copy. | `e2e/run.mjs` E14 |
 
+## Calendar writes (K)
+
+| # | Failure mode | Wanted behaviour | Test |
+|---|---|---|---|
+| K1 | An event write runs before the user granted `calendar.events`. | foxlink asks for consent one time, for the granted scopes plus `calendar.events`. Then it asks foxgate. | `calendar-write.test.ts` K1, E15 |
+| K2 | The approval hides who gets an invite, or the time zone. | The approval text has the title, start, end, time zone, attendees, `sendUpdates`, location, and description. | `calendar-write.test.ts` K2 |
+| K3 | An event goes out with invites that the human did not approve. | `sendUpdates` is `none` unless the approved args say `all` or `externalOnly`. The fake Google counts zero invites. | `calendar-write.test.ts` K3, E15 |
+| K4 | The attendees or `sendUpdates` change after the approval. | It refuses with `action-changed`. No event is made. | `calendar-write.test.ts` K4 |
+| K5 | A grant with `approval: "never"` adds an event with no human. | It refuses with `approval-required`. | `calendar-write.test.ts` K5 |
+| K6 | A bad time zone, a bad attendee address, more than 50 attendees, or a bad `sendUpdates`. | It refuses with `bad-input`, before the gate. | `calendar-write.test.ts` K6 |
+| K7 | `patchEvent` changes an event that the user does not own. | It refuses with `not-own-event`, before the gate. Nothing changes. | `calendar-write.test.ts` K7 |
+| K8 | `patchEvent` deletes or cancels an event, or sets a field that foxlink does not show. | It takes only the shown fields. An unknown field such as `status` gets `bad-input`. foxlink has no delete call. | `calendar-write.test.ts` K8 |
+| K9 | The event changes at Google between the approval and the patch. | The approval holds the current title, start, and end. A changed event gets `action-changed`. | `calendar-write.test.ts` K9 |
+| E15 | In Firefox, the first event needs a scope that the user did not grant. | The popup opens the consent window for `calendar.events`, shows the event for approval, and adds it with no invites. | `e2e/run.mjs` E15 |
+
 ## Firefox (E)
 
 | # | Failure mode | Wanted behaviour | Test |
