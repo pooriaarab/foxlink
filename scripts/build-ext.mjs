@@ -3,7 +3,8 @@
 // package.json version, so AMO signs the version that npm publishes.
 // With --e2e it builds for e2e/run.mjs: it sets globalThis.FOXLINK_E2E, so
 // the local server port works, and adds http://*.localhost/* for the fake
-// Google. The release build (no flag) has neither (E10, E11).
+// Google, and https://*.trycloudflare.com/* for its tunnel on Ichabod. The
+// release build (no flag) has none of them (E10, E11).
 import { cpSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { build } from "esbuild";
 
@@ -27,5 +28,5 @@ await build({
   define: { "globalThis.FOXLINK_E2E": String(e2e) },
 });
 for (const file of files.filter((f) => !f.endsWith(".js") && f !== "amo-metadata.json")) cpSync(`extension/${file}`, `dist-ext/${file}`, { recursive: true });
-if (e2e) writeFileSync("dist-ext/manifest.json", `${JSON.stringify({ ...manifest, host_permissions: [...manifest.host_permissions, "http://*.localhost/*"] }, null, 2)}\n`);
+if (e2e) writeFileSync("dist-ext/manifest.json", `${JSON.stringify({ ...manifest, host_permissions: [...manifest.host_permissions, "http://*.localhost/*", "https://*.trycloudflare.com/*"] }, null, 2)}\n`);
 console.log(`Built dist-ext/ (version ${pkg.version}${e2e ? ", e2e" : ""}).`);

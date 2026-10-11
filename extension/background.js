@@ -21,9 +21,11 @@ let vaultReady;
 let current;
 
 // In the e2e build only, the port points every endpoint at the local fake
-// Google that e2e/run.mjs starts. build-ext.mjs sets FOXLINK_E2E; in the
-// release build this branch and localEndpoints() are not in the bundle.
+// Google that e2e/run.mjs starts. On Ichabod the field holds the endpoints
+// as JSON instead, with the tunnel URLs. build-ext.mjs sets FOXLINK_E2E; in
+// the release build this branch and localEndpoints() are not in the bundle.
 function localEndpoints(port) {
+  if (!/^\d+$/.test(port)) return JSON.parse(port);
   const local = (sub) => `http://${sub}.localhost:${Number(port)}`;
   return { authorizeUrl: `${local("accounts")}/o/oauth2/v2/auth`, tokenUrl: `${local("oauth2")}/token`, revokeUrl: `${local("oauth2")}/revoke`, gmailBase: `${local("gmail")}/gmail/v1`, calendarBase: `${local("www")}/calendar/v3` };
 }

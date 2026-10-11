@@ -159,7 +159,7 @@ what is not tested against the real Google.
 | E7 | The popup loads the tracking pixel of an email. | The fake server counts zero pixel hits. | `e2e/run.mjs` E7 |
 | E8 | A send runs with no approval. | Send asks first. Approve sends it one time. | `e2e/run.mjs` E8 |
 | E9 | Disconnect leaves a token that works. | After disconnect, the fake server refuses the old refresh token. | `e2e/run.mjs` E9 |
-| E10 | The release build keeps `http://*.localhost/*`, which only the fake Google uses. | The release `dist-ext/manifest.json` has only the Google hosts. The e2e build (`build-ext.mjs --e2e`) adds `*.localhost`. | `tests/build-ext.test.ts` E10 |
+| E10 | The release build keeps `http://*.localhost/*`, which only the fake Google uses. | The release `dist-ext/manifest.json` has only the Google hosts. The e2e build (`build-ext.mjs --e2e`) adds `*.localhost`, and `*.trycloudflare.com` for the tunnel on Ichabod. | `tests/build-ext.test.ts` E10 |
 | E11 | The release build can still send OAuth codes and tokens to a local server, for example from a port saved by an e2e build. | The release bundle holds no `.localhost` endpoint, and the popup shows no local server field. | `tests/build-ext.test.ts` E11 |
 
 ## AMO release build and listed submission (`scripts/amo-listing.mjs`)
