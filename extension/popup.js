@@ -11,6 +11,11 @@ async function call(type, data = {}) {
 
 function show(id, text) {
   $(id).textContent = text;
+  // Connected: the dot turns green and Connect is no longer the primary.
+  if (id === "status") {
+    $(id).parentElement.classList.toggle("on", text !== "Not connected");
+    $("connect").classList.toggle("primary", text === "Not connected");
+  }
   $(id).dataset.runs = String(Number($(id).dataset.runs ?? 0) + 1);
 }
 
@@ -35,13 +40,28 @@ const ORDER = ["to", "cc", "bcc", "subject", "body", "attachments", "privateData
 const rank = (key) => (ORDER.includes(key) ? ORDER.indexOf(key) : ORDER.length);
 // A start or end also shows as a wall clock time in the approved time zone.
 const clock = (iso, zone) => `${iso} (${new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: zone }).format(new Date(iso))} in ${zone})`;
-function approval(args) {
+// A letter avatar for the service. The hue comes from the name; setProperty
+// is CSSOM, which the default extension CSP allows.
+function siteIcon(site) {
+  const box = Object.assign(document.createElement("span"), { className: "site-icon", textContent: (site[0] ?? "?").toUpperCase() });
+  let hue = 0;
+  for (const c of site) hue = (hue * 31 + c.charCodeAt(0)) % 360;
+  box.style.setProperty("--hue", String(hue));
+  box.setAttribute("aria-hidden", "true");
+  return box;
+}
+const el = (tag, className, textContent) => Object.assign(document.createElement(tag), { className, textContent });
+const ASKS = { send: ["Gmail", "Send this email."], event: ["Google Calendar", "Add this event to your calendar."] };
+function approval(kind, args) {
   const rows = document.createElement("dl");
   for (const [k, v] of Object.entries(args).toSorted(([a], [b]) => rank(a) - rank(b))) {
     const text = ["start", "end"].includes(k) && args.timeZone ? clock(v, args.timeZone) : shown(v);
     rows.append(Object.assign(document.createElement("dt"), { textContent: k }), Object.assign(document.createElement("dd"), { textContent: text }));
   }
-  $("pending").replaceChildren(Object.assign(document.createElement("p"), { textContent: "Approve this exact action?" }), rows);
+  const [site, line] = ASKS[kind];
+  const head = el("div", "ask-head");
+  head.append(siteIcon(site), el("span", "site", site));
+  $("pending").replaceChildren(head, el("p", "what", line), rows);
 }
 const outcome = (r) => (r.reason ? `${r.status}: ${r.reason}` : r.status[0].toUpperCase() + r.status.slice(1));
 
@@ -50,8 +70,8 @@ async function propose(kind) {
   const r = await call(kind, await forms[kind]());
   if (r.status === "ask") {
     waiting = { kind, requestId: r.requestId };
-    approval(r.args);
-    $("approve").hidden = $("deny").hidden = false;
+    approval(kind, r.args);
+    $("approve").hidden = $("deny").hidden = $("ask").hidden = false;
   }
   show("result", r.status === "ask" ? "Waiting for approval" : outcome(r));
 }
@@ -85,12 +105,12 @@ const actions = {
   event: () => propose("event"),
   approve: async () => {
     const { token } = await call("approve", waiting);
-    $("approve").hidden = $("deny").hidden = true;
+    $("approve").hidden = $("deny").hidden = $("ask").hidden = true;
     show("result", outcome(await call(waiting.kind, { ...(await forms[waiting.kind]()), token })));
   },
   deny: async () => {
     await call("deny", waiting);
-    $("approve").hidden = $("deny").hidden = true;
+    $("approve").hidden = $("deny").hidden = $("ask").hidden = true;
     show("result", "Denied");
   },
 };
