@@ -36,7 +36,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.19.1",
-    "create-foxkit": "^0.1.0",
+    "create-foxkit": "^0.1.2",
     "esbuild": "^0.28.2",
     "foxtrail": "^0.1.0",
     "oxlint": "^1.87.0",

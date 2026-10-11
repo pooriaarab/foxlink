@@ -5,7 +5,17 @@
 //
 // identity.launchWebAuthFlow runs for real: it opens the fake consent page in
 // a window and catches the loopback redirect http://127.0.0.1/mozoauth2/...
-import { launch, poll, serve, writeArtifact } from "create-foxkit/e2e";
+// Firefox catches that URL before any request goes out, so it works on
+// Ichabod too.
+//
+// With FOXKIT_BROWSER=ichabod the cloud browser cannot reach *.localhost, so
+// the fake Google and the web page get tunnel URLs on two origins, as in the
+// local run: the API hosts (gmail, www) on this process's tunnel, and the
+// sign-in hosts (accounts, oauth2) and the web page on a second one from
+// e2e/second-origin.mjs. The access token then only goes to the API origin.
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+import { browserMode, launch, poll, serve, tunnel, writeArtifact } from "create-foxkit/e2e";
 import { startFakeGoogle } from "./fake-google.mjs";
 
 const CLIENT_ID = "foxlink-e2e.apps.googleusercontent.com";
@@ -24,8 +34,28 @@ const items = (page) => page.evaluate(() => [...document.querySelectorAll("#list
 const storageDump = (page) => page.evaluate(async () => JSON.stringify(await browser.storage.local.get(null)));
 const leaked = (text, g) => g.issued.filter((v) => text.includes(v)).length;
 
+// The child prints one JSON line with a URL for each port, then stays until its stdin closes.
+async function secondOrigin(ports) {
+  const child = spawn(process.execPath, ["e2e/second-origin.mjs", ...ports.map(String)], { stdio: ["pipe", "pipe", "inherit"] });
+  const exited = new Promise((done) => child.once("exit", (code) => done(code)));
+  const line = await Promise.race([createInterface({ input: child.stdout })[Symbol.asyncIterator]().next(), exited.then((code) => ({ code }))]);
+  if (typeof line.value !== "string") throw new Error(`e2e/second-origin.mjs stopped with code ${line.code} before it printed its URLs.`);
+  return { urls: JSON.parse(line.value), close: () => (child.stdin.end(), exited) };
+}
+
+const remote = browserMode() === "ichabod";
 const g = await startFakeGoogle();
 g.behavior.consent = "page";
+let site = await serve("e2e/site", { tunnel: false });
+let signInOrigin;
+if (remote) {
+  const api = await tunnel(g.port);
+  signInOrigin = await secondOrigin([g.port, Number(new URL(site.url).port)]);
+  const [signIn, page] = signInOrigin.urls;
+  g.publish({ accounts: `${signIn}/accounts`, oauth2: `${signIn}/oauth2`, gmail: `${api.url}/gmail`, www: `${api.url}/www` });
+  site = { url: page, close: site.close };
+  record.origins = { api: new URL(api.url).origin, signIn: new URL(signIn).origin };
+}
 g.addEvents([
   { summary: "Past", start: { dateTime: hours(-3) }, end: { dateTime: hours(-2) } },
   { summary: "Standup", start: { dateTime: hours(1) }, end: { dateTime: hours(1.5) } },
@@ -38,7 +68,6 @@ g.addMessages([
   { id: "m0", from: "shop@example.com", to: "me@example.com", subject: "Your order shipped", date: "Fri, 09 Oct 2026 08:00:00 +0000", html: `<p>Hello,</p><img src="${pixel}" width="1" height="1"><script>steal()</script><p>Your order is on the way.</p>` },
   ...["Team lunch", "Invoice 42", "Weekend plans", "Re: the report", "Older note", "Oldest"].map((subject, i) => ({ id: `m${i + 1}`, from: "friend@example.com", to: "me@example.com", subject, date: "Thu, 08 Oct 2026 10:00:00 +0000", text: `Body ${i}` })),
 ]);
-const site = await serve("e2e/site");
 let fox;
 try {
   fox = await launch({ extension: "dist-ext", headless: !process.argv.includes("--headed") });
@@ -54,7 +83,7 @@ try {
   await popup.evaluate(([id, port]) => {
     document.getElementById("client-id").value = id;
     document.getElementById("test-port").value = port;
-  }, [CLIENT_ID, String(g.port)]);
+  }, [CLIENT_ID, remote ? JSON.stringify(g.endpoints) : String(g.port)]);
   check("settings saved", "Saved", await press(popup, "#save"));
 
   const status = await press(popup, "#connect", "#status");
@@ -125,7 +154,7 @@ try {
   const page = await fox.open(`${site.url}/index.html`);
   await page.evaluate((url) => fetch(url).catch(() => null), `${g.endpoints.gmailBase}/users/me/messages`);
   await new Promise((done) => setTimeout(done, 500));
-  const fromPage = g.log.filter((r) => r.origin === site.url);
+  const fromPage = g.log.filter((r) => r.origin === new URL(site.url).origin);
   check("E6: a web page request to the API host has no token", [null], fromPage.map((r) => r.token));
 
   const refresh = g.issued.filter((v) => v.startsWith("1//")).at(-1);
@@ -137,6 +166,7 @@ try {
 } finally {
   await fox?.close();
   await site.close();
+  await signInOrigin?.close();
   await g.close();
 }
 record.passed = !record.error && record.checks.length === 34 && record.checks.every((c) => c.ok);
