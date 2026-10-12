@@ -156,6 +156,8 @@ try {
   await new Promise((done) => setTimeout(done, 500));
   const fromPage = g.log.filter((r) => r.origin === new URL(site.url).origin);
   check("E6: a web page request to the API host has no token", [null], fromPage.map((r) => r.token));
+  // On Ichabod a session slows with each open tab, so close it.
+  await page.close();
 
   const refresh = g.issued.filter((v) => v.startsWith("1//")).at(-1);
   check("E9: disconnect", "Revoked at the provider", await press(popup, "#disconnect"));
