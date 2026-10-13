@@ -126,7 +126,14 @@ call("getSettings").then((s) => {
   $("client-id").value = s.clientId;
   $("client-secret").value = s.clientSecret;
   $("test-port").value = s.testPort;
-  if (!s.clientId) $("settings-box").open = true;
+  if (!s.clientId) showSettings(true);
 });
+
+// Settings open from the cog in the header, as in foxmate.
+function showSettings(open) {
+  $("settings-box").hidden = !open;
+  $("settings-toggle").setAttribute("aria-expanded", String(open));
+}
+$("settings-toggle").addEventListener("click", () => showSettings($("settings-box").hidden));
 call("redirect").then((uri) => ($("redirect").textContent = uri));
 call("status").then((s) => show("status", statusText(s)), () => {});
