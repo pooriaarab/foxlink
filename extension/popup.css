@@ -137,3 +137,11 @@ details > button { margin-top: 14px; }
 .result { display: flex; align-items: baseline; gap: 8px; margin-top: 14px; font-size: 13px; color: var(--muted); }
 .result output { color: var(--text); font-weight: 550; overflow-wrap: anywhere; }
 .result output:empty::before { content: "Nothing yet."; font-weight: 400; color: var(--muted); }
+
+/* The cog in the header opens the settings, as in foxmate. */
+.icon-button { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%; color: var(--muted); }
+.icon-button svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.icon-button:hover, .icon-button[aria-expanded="true"] { color: var(--text); }
+.settings { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.settings > button { margin-top: 14px; }
+
