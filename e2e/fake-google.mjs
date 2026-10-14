@@ -3,6 +3,9 @@
 // foxlink uses. It routes by the first label of the host name, as Google does:
 // accounts.localhost, oauth2.localhost, gmail.localhost, www.localhost.
 // It listens on "::" so that 127.0.0.1 and ::1 both reach it.
+// Behind a tunnel the Host is 127.0.0.1, so a request routes by its first
+// path segment instead (/accounts/o/oauth2/v2/auth). publish() sets the
+// public base URL of each name, for a cloud browser.
 //
 //   const g = await startFakeGoogle();
 //   g.addClient({ id: "client-1", redirectUris: ["http://127.0.0.1/mozoauth2/abc"] });
@@ -102,7 +105,7 @@ export async function startFakeGoogle({ now = Date.now } = {}) {
     pending.set(id, { client, redirectUri, scopes, state: p.get("state"), challenge: p.get("code_challenge"), nonce: p.get("nonce") });
     if (behavior.consent === "page") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(`<!doctype html><title>Sign in - Fake Google Accounts</title><h1>foxlink test wants access</h1><ul>${scopes.map((s) => `<li>${s}</li>`).join("")}</ul><a id="allow" href="/o/oauth2/v2/approve?id=${id}">Allow</a><script>setTimeout(() => location.replace(document.getElementById("allow").href), 300)</script>`);
+      res.end(`<!doctype html><title>Sign in - Fake Google Accounts</title><h1>foxlink test wants access</h1><ul>${scopes.map((s) => `<li>${s}</li>`).join("")}</ul><a id="allow" href="approve?id=${id}">Allow</a><script>setTimeout(() => location.replace(document.getElementById("allow").href), 300)</script>`);
       return;
     }
     approve(id, res);
@@ -276,7 +279,12 @@ export async function startFakeGoogle({ now = Date.now } = {}) {
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://x");
-    const sub = (req.headers.host ?? "").split(".")[0];
+    let sub = /^([a-z0-9]+)\.localhost(:\d+)?$/.exec(req.headers.host ?? "")?.[1];
+    if (!sub) {
+      const named = /^\/(accounts|oauth2|gmail|www)(\/.*)$/.exec(url.pathname);
+      sub = named?.[1] ?? "";
+      url.pathname = named?.[2] ?? url.pathname;
+    }
     const auth = /^Bearer (\S+)$/.exec(req.headers.authorization ?? "")?.[1] ?? null;
     log.push({ host: sub, method: req.method, path: url.pathname, token: auth, origin: req.headers.origin ?? null });
     try {
@@ -298,17 +306,24 @@ export async function startFakeGoogle({ now = Date.now } = {}) {
   });
   await new Promise((done) => server.listen(0, "::", done));
   const { port } = server.address();
-  const origin = (sub) => `http://${sub}.localhost:${port}`;
+  let published = null;
+  const origin = (sub) => published?.[sub] ?? `http://${sub}.localhost:${port}`;
 
   return {
     port,
     origin,
-    endpoints: {
-      authorizeUrl: `${origin("accounts")}/o/oauth2/v2/auth`,
-      tokenUrl: `${origin("oauth2")}/token`,
-      revokeUrl: `${origin("oauth2")}/revoke`,
-      gmailBase: `${origin("gmail")}/gmail/v1`,
-      calendarBase: `${origin("www")}/calendar/v3`,
+    get endpoints() {
+      return {
+        authorizeUrl: `${origin("accounts")}/o/oauth2/v2/auth`,
+        tokenUrl: `${origin("oauth2")}/token`,
+        revokeUrl: `${origin("oauth2")}/revoke`,
+        gmailBase: `${origin("gmail")}/gmail/v1`,
+        calendarBase: `${origin("www")}/calendar/v3`,
+      };
+    },
+    /** @param {{ accounts: string, oauth2: string, gmail: string, www: string }} bases public URLs that end in /<name> */
+    publish(bases) {
+      published = { ...bases };
     },
     behavior,
     log,
