@@ -1,6 +1,6 @@
 {
   "name": "foxlink-oauth",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "OAuth PKCE client for Firefox extensions with vault-backed tokens, Gmail, Google Calendar, and approval-gated writes.",
   "type": "module",
   "license": "MIT",
