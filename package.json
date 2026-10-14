@@ -1,7 +1,7 @@
 {
   "name": "foxlink-oauth",
   "version": "0.1.5",
-  "description": "Connect Gmail and Google Calendar to a Firefox extension with OAuth.",
+  "description": "OAuth PKCE client for Firefox extensions with vault-backed tokens, Gmail, Google Calendar, and approval-gated writes.",
   "type": "module",
   "license": "MIT",
   "author": "Pooria Arab",
@@ -47,5 +47,19 @@
   "dependencies": {
     "foxgate": "^0.1.0",
     "foxvault": "^0.1.0"
-  }
+  },
+  "keywords": [
+    "oauth",
+    "oauth2",
+    "pkce",
+    "firefox",
+    "webextension",
+    "gmail",
+    "google-calendar",
+    "typescript",
+    "token-refresh",
+    "foxvault",
+    "foxgate",
+    "email-assistant"
+  ]
 }
