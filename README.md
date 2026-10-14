@@ -1,35 +1,26 @@
-# foxlink
+# foxlink-oauth
 
-<p align="center">Connect Gmail and Google Calendar to a Firefox extension with OAuth.</p>
+[![npm version](https://img.shields.io/npm/v/foxlink-oauth)](https://www.npmjs.com/package/foxlink-oauth)
+[![Downloads/month](https://img.shields.io/npm/dm/foxlink-oauth)](https://www.npmjs.com/package/foxlink-oauth)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://opensource.org/license/mit)
+[![Types included](https://img.shields.io/badge/types-included-blue)](#runtime-surfaces)
 
-<p align="center">
-  <a href="https://github.com/pooriaarab/foxlink/actions"><img src="https://github.com/pooriaarab/foxlink/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License MIT"/></a>
-</p>
+[Setup](#install) · [Quickstart](#read-your-first-messages-and-events) · [API reference](#runtime-surfaces) · [Comparisons](#compare)
 
-foxlink runs the OAuth 2.0 authorization code flow with PKCE through
-`identity.launchWebAuthFlow`. It works with any provider config, and it has
-a Google preset for Gmail and Calendar. The tokens go into
-[foxvault](https://github.com/pooriaarab/foxvault). With the `inject`
-transport, foxvault adds the access token to each API request in Firefox.
-Then your extension code, the page, and the AI model never get the token. Sending an email or adding an event
-waits for a [foxgate](https://github.com/pooriaarab/foxgate) approval of
-the exact action. Email and event text comes back marked as untrusted.
-
-You bring your own OAuth client ID. foxlink ships none.
+foxlink-oauth is an open-source OAuth client library for Firefox extension developers who read Gmail and Google Calendar.
+It implements authorization codes with Proof Key for Code Exchange (PKCE) and stores tokens through foxvault.
+Email sends and calendar writes require approval through foxgate.
 
 ## Install
 
 ```bash
-npm i foxlink-oauth
+npm i foxlink-oauth foxvault foxgate
 ```
 
-The npm package is `foxlink-oauth`: npm refuses the plain name `foxlink` as too similar to an existing package (oxlint and comlink).
+The package declares Node.js 24+ and includes TypeScript declarations.
+Its two direct runtime dependencies are foxvault and foxgate. Browser header injection needs Firefox extension APIs.
 
-
-foxlink needs `foxvault` and `foxgate`. npm installs them with it.
-
-## Example
+## Read your first messages and events
 
 This code runs in the background script of a Firefox extension. The
 extension needs the permissions `identity`, `storage`, `webRequest`, and
@@ -45,7 +36,10 @@ const store = storageAreaStore(browser.storage.local);
 const vault = createVault({ store, keyStore: indexedDbKeyStore() });
 attachHeaderInjection(vault, browser); // at the top level of the event page
 
-const provider = googleProvider({ clientId: "YOUR_CLIENT_ID.apps.googleusercontent.com" });
+const provider = googleProvider({
+  clientId: "YOUR_CLIENT_ID.apps.googleusercontent.com",
+  clientSecret: "YOUR_DESKTOP_CLIENT_SECRET",
+});
 const link = createLink({ provider, vault, store, identity: browser.identity, transport: "inject" });
 
 // Call this from a message handler, for example when the user selects a button.
@@ -54,11 +48,18 @@ async function today() {
   if (!(await link.status()).connected) await link.connect(); // opens the Google sign-in window
   const { events } = await calendar(link).listEvents({ max: 3 });
   const { messages } = await gmail(link).listMessages({ max: 5 });
-  return { events: events.map((e) => e.summary), subjects: messages.map((m) => m.subject) };
+  const result = { events: events.map((e) => e.summary), subjects: messages.map((m) => m.subject) };
+  console.log(result);
+  return result;
 }
 ```
 
-The HTML to text function also runs in Node:
+Register a Google OAuth client and supply its values above. See [Google setup](#use-your-own-google-client-id).
+Invoke `today()` from a user action through your extension message handler.
+Success prints `{ events: [...], subjects: [...] }`; empty arrays mean an empty calendar or inbox.
+No environment variables or `.env` loading are required. Google credentials and live redirect acceptance need your own validation.
+
+For a credential-free smoke check, save this as `text.mjs` and run `node text.mjs`:
 
 ```js
 import { htmlToText } from "foxlink-oauth";
@@ -67,93 +68,68 @@ console.log(htmlToText('<p>Hi &amp; welcome</p><img src="https://t.example/p.gif
 // Hi & welcome
 ```
 
-## Use cases
-
-| Who | What they build | How foxlink helps |
-|---|---|---|
-| A browser agent author (for example foxmate) | An agent that reads the user's inbox and calendar and answers email | The agent gets message text marked `untrusted`, and never a token. A send waits for the user to approve the exact recipients, subject, body, and attachments. One approval sends one message. |
-| An email assistant author | A helper that writes replies for the user to check and send from Gmail | `gmail(link, { draftOnly: true })` saves drafts with no approval and cannot send. |
-| A scheduling assistant author | An agent that puts meetings on the user's calendar | `createEvent` shows the time zone and attendees for approval, and sends no invites unless the approval says `sendUpdates: "all"`. `patchEvent` moves only events that the user organizes. |
-| An auditor of an agent | A record of what the agent sent, with no copy of the mail | Pass a foxtrail log as `trail`. Each send adds the recipients, the Gmail ID, and the SHA-256 of the raw message. |
-| An extension author | A "what is next today" popup or new tab page | `listEvents({ max: 3 })` with the read-only Calendar scope, and refresh on expiry with no code of your own. |
-| A privacy tool author | An inbox cleaner that runs on the user's device only | The mail goes from Google to the extension and nowhere else. `htmlToText` drops scripts and tracking pixels, so opening a message loads nothing. |
-| An author of another OAuth integration | A link to GitHub, Notion, or any provider that issues codes with PKCE | `defineProvider` takes the endpoints, scopes, and API hosts. `connect`, `fetch`, refresh, and `disconnect` work the same. |
-| An MCP server or agent framework author | An email or calendar tool for a model | `gmail` and `calendar` return small typed records. `toPromptText` fences each record so that its text cannot close the fence. |
-| A security reviewer | A check that an extension asks only for what it needs | The Google preset asks for read scopes. It asks for a write scope only at the first write that needs it, and only when `allowedScopes` holds it. `connect` refuses scopes that the server adds. |
-
 ## How it works
 
-```mermaid
-sequenceDiagram
-  participant App as Your background script
-  participant L as foxlink
-  participant F as Firefox identity
-  participant G as Google
-  participant V as foxvault
-  App->>L: connect()
-  L->>L: make verifier, S256 challenge, state, and nonce (openid only)
-  L->>F: launchWebAuthFlow(authorize URL with challenge and state)
-  F->>G: sign-in and consent window
-  G-->>F: redirect to http://127.0.0.1/mozoauth2/<id>?code&state
-  F-->>L: redirect URL (Firefox does not load it)
-  L->>L: check the redirect URI and the state
-  L->>G: POST /token with code, redirect_uri, code_verifier
-  G-->>L: access token, refresh token, granted scopes
-  L->>L: refuse scopes that it did not ask for (revoke)
-  L->>V: store both tokens encrypted, add a header rule for the API hosts
-  L-->>App: status: connected, scopes, expiry (no token)
+```text
+Extension -> Firefox sign-in -> OAuth provider -> code and state
+Extension -> checked code exchange -> encrypted tokens in foxvault
+Gmail/Calendar read -> link.fetch -> approved API host
+Gmail/Calendar write -> foxgate approval -> exact approved action -> API
 ```
 
-1. `connect` makes a 43-character PKCE verifier and sends its SHA-256
-   challenge. It sends a random `state`, and a `nonce` when the scopes hold
-   `openid`.
-2. The redirect URL must have the same origin and path as the redirect URI,
-   and the same `state`. Else foxlink reads no code from it.
-3. When the server grants a scope that foxlink did not ask for, foxlink
-   revokes the token and stores nothing.
-4. The access token and the refresh token are foxvault secrets. The store
-   holds only the scopes, the issue and expiry times, and whether a refresh
-   token exists.
-5. `link.fetch` sends requests to the API hosts only. It refreshes the
-   access token 60 seconds before expiry (or at half its life, when that is
-   sooner) and one time after a 401. Calls at the same time share one
-   refresh request. A refresh that a `connect` or a `disconnect` overtook
-   throws its token away.
-6. When Google refuses the refresh token (`invalid_grant`), foxlink forgets
-   the tokens and throws `reconnect`.
+The link checks redirect origin, path, state, and granted scopes before it stores tokens.
+Header injection keeps API access tokens out of calling code. The alternative `use` transport builds headers in trusted host code.
+A shared refresh request handles concurrent callers. One 401 can trigger one refresh and request retry.
 
-```mermaid
-sequenceDiagram
-  participant P as AI planner
-  participant M as gmail(link, { gate })
-  participant G as foxgate
-  participant U as Human
-  participant API as Gmail API
-  P->>M: sendMessage({ to, cc, bcc, subject, body, attachments })
-  M->>M: check input, copy and hash the attachments
-  M->>U: consent window for gmail.send (first send only)
-  M->>G: check(foxlink.gmail.send, scope submit)
-  G-->>M: ask, requestId
-  M-->>P: { status: "ask", requestId }
-  U->>G: approve the exact JSON (host side)
-  G-->>P: token
-  P->>M: sendMessage(same message, { token })
-  M->>G: redeem(token, action)
-  G-->>M: allow, the judged args
-  M->>API: POST messages/send (foxvault adds the token)
-  M->>M: add to foxtrail: recipients, ID, SHA-256 (no text)
-  M-->>P: { status: "sent", id, sha256 }
-```
+## Why it exists
 
-A changed message gets `action-changed`, also for one changed attachment
-byte. A used token gets `token-used`. Every failure mode has a test: see
-[docs/failure-modes.md](docs/failure-modes.md).
+[oauth4webapi](https://github.com/panva/oauth4webapi) supplies general OAuth protocol routines.
+[Auth0 SPA SDK](https://auth0.github.io/auth0-spa-js/index.html) supplies browser authentication for Auth0 applications.
+foxlink-oauth joins Firefox sign-in, token storage, and approval-gated Gmail and Calendar operations in one library.
 
-## API
+## Compare
 
-This package is a library only. It has no CLI and no MCP server. The tokens
-must stay in one extension, behind foxvault. A CLI or an MCP server would
-have to hold the tokens in another process.
+Scope checked on 2026-10-14 against the linked official documentation. These libraries address different application surfaces.
+
+| Item | foxlink-oauth | [oauth4webapi](https://github.com/panva/oauth4webapi) | [Auth0 SPA SDK](https://auth0.github.io/auth0-spa-js/index.html) |
+|---|---|---|---|
+| Scope | OAuth plus Gmail/Calendar clients | OAuth/OpenID Connect routines | Auth0 browser authentication |
+| Deployment | Extension or trusted host | JavaScript runtime | Browser application |
+| Configuration | Provider and vault objects | Protocol calls and metadata | Auth0 client options |
+| License | MIT | MIT | MIT |
+
+## Coverage
+
+| Integration | Status | Verification |
+|---|---|---|
+| Google OAuth | ✓ | Preset and fake-server tests; live credentials pending |
+| Gmail | ✓ | Reads, drafts, sends; fake-server tests |
+| Google Calendar | ✓ | Reads, creates, updates; fake-server tests |
+| Other PKCE providers | — | Configuration interface only; no other preset ships |
+
+One provider preset and two service clients ship. Zero integrations are credential-checked against a real Google account in this repository.
+The E2E suite uses a local fake Google server. Provider acceptance and account policy remain pending live verification.
+
+## Common use cases
+
+1. Firefox extension authors: show Gmail subjects and upcoming Google Calendar events in a popup.
+2. Email assistant authors: create Gmail drafts with `draftOnly` before a person reviews them.
+3. Browser agent authors: use foxgate to approve exact Gmail recipients, text, and attachments.
+4. Scheduling assistant authors: approve Google Calendar changes and choose whether to send attendee updates.
+5. Agent auditors: pass a foxtrail log to record send identifiers and hashes without email bodies.
+
+## Features
+
+- **Provider configuration:** define endpoints, scopes, redirects, and allowed API hosts; see [providers](#providers).
+- **Token refresh:** refresh before expiry and retry one unauthorized request.
+- **Approved writes:** register four foxgate tool entries; see [Gmail and Calendar](#gmail-and-calendar).
+- **Text handling:** return untrusted records and convert HTML without loading images; see [text](#text).
+- **Local demo:** build the [Firefox extension](#demo-extension) with your own Google client.
+
+## Runtime surfaces
+
+The package exports a library, with no command-line interface (CLI) or Model Context Protocol (MCP) server.
+Firefox uses `identity` and header injection. The `use` transport accepts custom launch and fetch functions in other runtimes.
 
 ### Providers
 
@@ -244,70 +220,7 @@ can have `status` (HTTP) and `oauthError` (the server error code, cut to
 `a-z 0-9 _`). No message holds a token, a code, or server text. Vault errors,
 for example `locked`, come through as foxvault `VaultError`.
 
-## The extension
-
-`extension/` is the foxlink add-on for Firefox 153+. Type your OAuth client
-ID in Settings. Then use "Connect Google", "Show my next 3 events", "Show 5
-latest email subjects", and "Read the latest email". The first send asks
-Google for the send scope. Then the popup shows To, Cc, Bcc, the subject,
-the body, and each attachment, and it sends only after you approve. "Add an
-event" works the same way, and sends invites only when you tick the box.
-
-```bash
-pnpm install
-pnpm build:ext   # builds dist-ext/; load it from about:debugging
-pnpm e2e         # builds with --e2e and runs it in Firefox against the local fake Google
-```
-
-Install from AMO: [addons.mozilla.org/firefox/addon/foxlink](https://addons.mozilla.org/firefox/addon/foxlink/)
-(pending AMO review; the link works after approval).
-
-### Use your own Google client ID
-
-We have not tested foxlink with a real Google account. We tested it against
-the fake Google server in `e2e/fake-google.mjs`, which copies the Google
-endpoints and REST shapes. These are the steps to try the real Google:
-
-1. In the [Google Cloud console](https://console.cloud.google.com/), create a
-   project or select one.
-2. In **APIs & Services > Library**, enable the **Gmail API** and the
-   **Google Calendar API**.
-3. Open **Google Auth Platform** (the OAuth consent screen). Set the
-   audience to **External**. Add your own Google account as a test user.
-4. In **Data Access**, add the scopes `gmail.readonly` and
-   `calendar.readonly`. Add `gmail.send` only if you want to send, and
-   `gmail.compose` only if you want drafts, and `calendar.events` only if
-   you want to add events.
-5. In **Clients**, create an OAuth client with the application type
-   **Desktop app**. Google accepts loopback redirect URIs for this type.
-   Copy the client ID and the client secret.
-6. In the foxlink Settings, paste the client ID and the client secret.
-   Select **Save**, then **Connect Google**.
-
-If Google refuses the redirect URI, make a **Web application** client
-instead. Add the redirect URI that the foxlink Settings show under
-**Authorized redirect URIs**. Google treats the client secret of an
-installed app as not secret. foxlink sends it to the token endpoint only.
-
-While the app is in the **Testing** state, Google makes refresh tokens that
-expire in 7 days. Then foxlink asks you to connect again. `gmail.readonly`
-is a restricted scope. A public app with it needs a Google review.
-
-## Firefox APIs used
-
-| API | MDN | Why |
-|---|---|---|
-| `identity.launchWebAuthFlow` (permission `identity`) | [launchWebAuthFlow](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/identity/launchWebAuthFlow) | Open the sign-in window and get the redirect URL with the code. |
-| `identity.getRedirectURL` | [getRedirectURL](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/identity/getRedirectURL) | The stable redirect URL from the add-on ID. The Google preset turns it into the loopback form. |
-| Loopback redirect `http://127.0.0.1/mozoauth2/<subdomain>` (Firefox 86+) | [identity](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/identity) | Google refuses the `extensions.allizom.org` domain, because nobody can verify it. |
-| Web Crypto `subtle.digest` and `crypto.getRandomValues` | [digest](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/digest) | The PKCE verifier and challenge, the state, and the nonce. |
-| `fetch` | [fetch](https://developer.mozilla.org/en-US/docs/Web/API/Window/fetch) | The token, revoke, Gmail, and Calendar requests. |
-| `webRequest.onBeforeSendHeaders` with `blocking`, through foxvault | [onBeforeSendHeaders](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/webRequest/onBeforeSendHeaders) | foxvault adds the access token to requests from the extension to the API hosts. |
-| IndexedDB, through foxvault | [IndexedDB API](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API) | The non-extractable vault key. |
-| `storage.local` | [storage.local](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/storage/local) | Encrypted tokens, the token record, foxgate state, and the popup settings. |
-| `runtime.sendMessage`, `runtime.onMessage` | [runtime](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/runtime) | The popup talks to the background page. Extension only. |
-
-## Limits
+## Delivery/behavior limits
 
 - We have not tested the real Google path. The tests use a fake Google
   server. We do not know yet if Google accepts the redirect URI
@@ -349,31 +262,97 @@ is a restricted scope. A public app with it needs a Google review.
   permission `http://*.localhost/*` and the local server port, for the fake
   Google. The release build that AMO signs has neither.
 
-## Part of the fox primitives
+## Integration guides
 
-```mermaid
-flowchart LR
-  foxkit[foxkit] -- template --> foxlink[foxlink]
-  foxvault[foxvault] --> foxlink
-  foxgate[foxgate] --> foxlink
-  foxgate --> foxvault
-  foxtrail[foxtrail] -. optional audit log .-> foxlink
-  foxlink --> foxmate[foxmate]
-  foxlink -. untrusted text .-> foxshield[foxshield]
-  click foxkit "https://github.com/pooriaarab/foxkit"
-  click foxvault "https://github.com/pooriaarab/foxvault"
-  click foxgate "https://github.com/pooriaarab/foxgate"
-  click foxtrail "https://github.com/pooriaarab/foxtrail"
-  click foxlink "https://github.com/pooriaarab/foxlink"
-  click foxmate "https://github.com/pooriaarab/foxmate"
-  click foxshield "https://github.com/pooriaarab/foxshield"
+- [Firefox Gmail and Google Calendar demo setup](#demo-extension)
+- [Google OAuth client setup](#use-your-own-google-client-id)
+- [Provider, vault, and scope configuration](#providers)
+
+### Demo extension
+
+`extension/` is the foxlink add-on for Firefox 153+. Type your OAuth client
+ID in Settings. Then use "Connect Google", "Show my next 3 events", "Show 5
+latest email subjects", and "Read the latest email". The first send asks
+Google for the send scope. Then the popup shows To, Cc, Bcc, the subject,
+the body, and each attachment, and it sends only after you approve. "Add an
+event" works the same way, and sends invites only when you tick the box.
+
+```bash
+pnpm install
+pnpm build:ext   # builds dist-ext/; load it from about:debugging
+pnpm e2e         # builds with --e2e and runs it in Firefox against the local fake Google
 ```
 
-foxlink depends on foxvault for the tokens and on foxgate for approvals.
-It can write each send to a foxtrail log, but it does not install foxtrail.
-foxshield does not depend on foxlink. An app can pass foxlink text to
-foxshield before a model reads it.
+### Use your own Google client ID
+
+We have not tested foxlink with a real Google account. We tested it against
+the fake Google server in `e2e/fake-google.mjs`, which copies the Google
+endpoints and REST shapes. These are the steps to try the real Google:
+
+1. In the [Google Cloud console](https://console.cloud.google.com/), create a
+   project or select one.
+2. In **APIs & Services > Library**, enable the **Gmail API** and the
+   **Google Calendar API**.
+3. Open **Google Auth Platform** (the OAuth consent screen). Set the
+   audience to **External**. Add your own Google account as a test user.
+4. In **Data Access**, add the scopes `gmail.readonly` and
+   `calendar.readonly`. Add `gmail.send` only if you want to send, and
+   `gmail.compose` only if you want drafts, and `calendar.events` only if
+   you want to add events.
+5. In **Clients**, create an OAuth client with the application type
+   **Desktop app**. Google accepts loopback redirect URIs for this type.
+   Copy the client ID and the client secret.
+6. In the foxlink Settings, paste the client ID and the client secret.
+   Select **Save**, then **Connect Google**.
+
+Register the redirect URI returned by `link.redirectUri()` when your client type requires it.
+The Google path needs a live check with your own client. Do not assume the fake server verifies Google acceptance.
+See [Google OAuth for installed apps](https://developers.google.com/identity/protocols/oauth2/native-app).
+
+## Status
+
+The package version is 0.1.5. The 0.x API can change.
+[GitHub issues](https://github.com/pooriaarab/foxlink/issues) are the support channel.
+Public case studies are not yet published. Real Google accounts have not been verified by the repository tests.
+
+## FAQ
+
+### What is foxlink-oauth?
+
+foxlink-oauth connects OAuth providers to trusted host code with foxvault token storage. It includes Gmail and Google Calendar clients.
+
+### Which integrations are verified?
+
+foxlink-oauth tests Google-shaped endpoints with a local fake server. The repository records no real-account credential verification.
+
+### Does foxlink-oauth provide a managed OAuth service?
+
+foxlink-oauth is a library you run in your extension or host process. You register and configure your own OAuth client.
+
+### How is foxlink-oauth different from oauth4webapi?
+
+foxlink-oauth includes vault storage and approval-gated Gmail and Calendar methods. oauth4webapi exposes general protocol routines; see the [comparison](#compare).
+
+### How is foxlink-oauth different from Auth0 SPA SDK?
+
+foxlink-oauth targets provider connections and extension service clients. Auth0 SPA SDK targets browser login for Auth0 applications; see the [comparison](#compare).
+
+### Can an agent send email without approval?
+
+foxlink-oauth requires a foxgate token for `sendMessage`. A changed action or used token is refused; ordinary drafts do not require approval.
+
+### Does foxlink-oauth expose access tokens to the caller?
+
+foxlink-oauth returns connection status without tokens. The `inject` transport delegates API headers to foxvault; `use` constructs headers in trusted host code.
+
+### Does foxlink-oauth run in Node.js?
+
+foxlink-oauth text helpers run in Node.js. OAuth connections outside Firefox need custom launch and redirect handling with the `use` transport.
+
+### Does untrusted text become safe for an AI model?
+
+foxlink-oauth marks records as untrusted and removes selected HTML elements. Hidden text can remain, so the host must enforce its own model-input policy.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://opensource.org/license/mit)
